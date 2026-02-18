@@ -20,7 +20,7 @@ HENRIK = "Henrik Friis"
 PER = "Per Føge Jensen"
 
 # Adjust retention window here (example: last 90 days)
-CUTOFF_DATE = datetime.now() - timedelta(days=90)
+CUTOFF_DATE = datetime.now() - timedelta(days=360)
 
 # Use unique filename to avoid Windows file-lock issues
 OUTPUT_FILE = f"Henrik_Per_ANALYSE_{datetime.now():%Y%m%d_%H%M}.xlsx"
