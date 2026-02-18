@@ -13,14 +13,32 @@ from bridge.analysis import (
     make_evening_role_matrix,
     make_quarterly_summary_with_ci,
     make_pair_field_report,
-    make_pair_declarer_report,   # ✅ NY: declarer field-ranking
+    make_pair_declarer_report,
+)
+
+# ✅ IMPORT PHASE 2.1 REFERENCE-LAG
+from bridge.phase21_reference import add_phase21_fields
+
+# ✅ IMPORT BOARD REVIEW
+from bridge.board_review import (
+    make_board_review_all_hands,
+    make_board_review_summary,
+    board_review_statistics,
+    print_board_review_stats,
+)
+
+# ✅ IMPORT DECLARER ANALYSIS
+from bridge.declarer_analysis import (
+    make_declarer_analysis,
+    make_declarer_risk_report,
+    print_declarer_analysis_highlights,
 )
 
 HENRIK = "Henrik Friis"
 PER = "Per Føge Jensen"
 
-# Adjust retention window here (example: last 90 days)
-CUTOFF_DATE = datetime.now() - timedelta(days=360)
+# ✅ CUTOFF: 7 dage tilbage
+CUTOFF_DATE = datetime.now() - timedelta(days=7)
 
 # Use unique filename to avoid Windows file-lock issues
 OUTPUT_FILE = f"Henrik_Per_ANALYSE_{datetime.now():%Y%m%d_%H%M}.xlsx"
@@ -64,6 +82,28 @@ def main():
     print("Tilføjer hånd-features...")
     df_all = add_hand_features(df_all)
 
+    # ✅ TILFØJ PHASE 2.1 REFERENCE-LAG
+    print("Tilføjer Phase 2.1 reference-lag...")
+    df_all = add_phase21_fields(df_all, n_min=12)
+    print("  ✓ Phase 2.1 felt-data beregnet")
+    print(f"    - Board Types fundet: {df_all['Board_Type'].value_counts().to_dict()}")
+    print(f"    - Split boards (competitive): {df_all['competitive_flag'].sum()}")
+
+    # ✅ BOARD REVIEW ANALYSE
+    print("\nGenererer Board Review rapporter...")
+    df_board_review_all = make_board_review_all_hands(df_all)
+    df_board_review_summary = make_board_review_summary(df_all)
+    
+    # Statistik
+    review_stats = board_review_statistics(df_board_review_all, df_board_review_summary)
+    print_board_review_stats(review_stats)
+
+    # ✅ DECLARER ANALYSIS
+    print("\nGenererer Declarer Analysis...")
+    df_declarer_analysis = make_declarer_analysis(df_all)
+    df_declarer_risk = make_declarer_risk_report(df_declarer_analysis)
+    print_declarer_analysis_highlights(df_declarer_analysis, top_n=5)
+
     # Kun rækker hvor I begge er med
     df_pair = df_all[
         df_all.apply(
@@ -89,6 +129,7 @@ def main():
     df_field_defense = make_pair_field_report(df_all, min_boards=50)
     df_field_declarer = make_pair_declarer_report(df_all, min_boards=50)
 
+    print("\nSkriver Excel-fil...")
     with pd.ExcelWriter(
         OUTPUT_FILE,
         engine="xlsxwriter",
@@ -104,14 +145,26 @@ def main():
         df_evening_matrix.to_excel(writer, sheet_name="Evening_Role_Matrix", index=False)
         df_quarterly.to_excel(writer, sheet_name="Quarterly_CI", index=False)
 
-        # ✅ nye, tydelige sheetnavne
+        # ✅ Field data
         df_field_defense.to_excel(writer, sheet_name="Field_Data_Defense", index=False)
         df_field_declarer.to_excel(writer, sheet_name="Field_Data_Declarer", index=False)
 
-    print("\nFærdig!")
-    print("Rå rækker totalt:", len(df_all))
-    print("Rækker hvor I begge er med:", len(df_pair))
-    print("Excel gemt som:", OUTPUT_FILE)
+        # ✅ Board Review
+        df_board_review_all.to_excel(writer, sheet_name="Board_Review_AllHands", index=False)
+        df_board_review_summary.to_excel(writer, sheet_name="Board_Review_Summary", index=False)
+
+        # ✅ Declarer Analysis
+        df_declarer_analysis.to_excel(writer, sheet_name="Declarer_Analysis", index=False)
+        if not df_declarer_risk.empty:
+            df_declarer_risk.to_excel(writer, sheet_name="Declarer_Risk", index=False)
+
+    print("\n" + "="*60)
+    print("ANALYSE FÆRDIG!")
+    print("="*60)
+    print(f"Rå rækker totalt:          {len(df_all)}")
+    print(f"Rækker hvor I begge er med: {len(df_pair)}")
+    print(f"Excel gemt som:            {OUTPUT_FILE}")
+    print("="*60)
 
 
 if __name__ == "__main__":
