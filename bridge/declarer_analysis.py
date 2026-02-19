@@ -1,208 +1,257 @@
 import pandas as pd
 import numpy as np
+from datetime import datetime
 
+# ✅ ROLLE-TABEL: Hvis declarer er position X, så er:
+DECLARER_ROLES = {
+    'N': {'dummy': 'S', 'leader': 'Ø', 'defender': 'V'},
+    'S': {'dummy': 'N', 'leader': 'V', 'defender': 'Ø'},
+    'Ø': {'dummy': 'V', 'leader': 'S', 'defender': 'N'},
+    'V': {'dummy': 'Ø', 'leader': 'N', 'defender': 'S'},
+}
 
-def make_declarer_analysis(df: pd.DataFrame) -> pd.DataFrame:
+def get_side(position):
+    """Returner NS eller ØV baseret på position"""
+    return 'NS' if position in ['N', 'S'] else 'ØV'
+
+def find_position(row, player_name):
+    """Find hvilken position en spiller sidder (N/S/Ø/V)"""
+    if row.get('ns1') == player_name:
+        return 'N'
+    elif row.get('ns2') == player_name:
+        return 'S'
+    elif row.get('ew1') == player_name:
+        return 'Ø'
+    elif row.get('ew2') == player_name:
+        return 'V'
+    return None
+
+def assign_roles(row, henrik, per):
     """
-    Declarer Analysis rapport: Identificer melde-systemfejl
+    Bestem roller for Henrik og Per baseret på declarer + deres positioner
     
-    Viser for hver board:
-    - Hvem blev declarer hos jer
-    - Hvem blev declarer hos fleste andre
-    - Udspillet hos jer vs typisk udspil
-    - Risiko-vurdering
+    Returns: dict med henrik_role, per_role, is_henrik_leader, is_per_leader
+    """
+    declarer_pos = row.get('decl')
+    if not declarer_pos:
+        return {
+            'henrik_position': None,
+            'per_position': None,
+            'henrik_role': None,
+            'per_role': None,
+            'is_henrik_leader': False,
+            'is_per_leader': False,
+        }
     
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        DataFrame med Phase 2.1 + følgende kolonner:
-        - board_no
-        - contract_norm
-        - decl (N/S/Ø/V)
-        - lead (♥5 format)
-        - Declarer_Side (NS/ØV)
-        - pct_NS
-        - expected_pct
+    # Find deres positioner
+    henrik_pos = find_position(row, henrik)
+    per_pos = find_position(row, per)
     
-    Returns:
-    --------
-    pd.DataFrame
-        Declarer analyse per board
+    # Hent rolle-info fra tabel
+    roles_info = DECLARER_ROLES[declarer_pos]
+    dummy_pos = roles_info['dummy']
+    leader_pos = roles_info['leader']
+    defender_pos = roles_info['defender']
+    
+    # Assign Henrik's rolle
+    if henrik_pos == declarer_pos:
+        henrik_role = 'Declarer'
+    elif henrik_pos == dummy_pos:
+        henrik_role = 'Dummy'
+    elif henrik_pos == leader_pos:
+        henrik_role = 'Leader'
+    elif henrik_pos == defender_pos:
+        henrik_role = 'Defender'
+    else:
+        henrik_role = None
+    
+    # Assign Per's rolle
+    if per_pos == declarer_pos:
+        per_role = 'Declarer'
+    elif per_pos == dummy_pos:
+        per_role = 'Dummy'
+    elif per_pos == leader_pos:
+        per_role = 'Leader'
+    elif per_pos == defender_pos:
+        per_role = 'Defender'
+    else:
+        per_role = None
+    
+    return {
+        'henrik_position': henrik_pos,
+        'per_position': per_pos,
+        'henrik_role': henrik_role,
+        'per_role': per_role,
+        'is_henrik_leader': (henrik_pos == leader_pos),
+        'is_per_leader': (per_pos == leader_pos),
+    }
+
+def make_declarer_analysis(df_a_only, henrik="Henrik Friis", per="Per Føge Jensen"):
+    """
+    Lav detaljeret Declarer Analysis for Henrik+Per
+    
+    Kolonner:
+    - tournament_date, board_no, row (A/B/C), contract
+    - henrik_position, per_position
+    - henrik_role, per_role (Declarer/Dummy/Leader/Defender)
+    - your_contract_side, field_contract_side
+    - contract_side_mismatch
+    - is_henrik_leader, is_per_leader
+    - your_lead
+    - declarer_mismatch
+    - performance
     """
     
-    if df.empty:
-        return df
+    rows = []
     
-    # Grupper per board
-    grouped = df.groupby(['tournament_date', 'board_no']).agg({
-        'contract_norm': 'first',
-        'pct_NS': 'mean',
-        'expected_pct': 'first',
-        'Board_Type': 'first',
-        'competitive_flag': 'first',
-        'N_section_played': 'first',
-    }).reset_index()
-    
-    # Beregn performance
-    grouped['pct_vs_expected'] = grouped['pct_NS'] - grouped['expected_pct']
-    
-    # For hver board: hvem var declarer?
-    declarer_analysis = []
-    
-    for (date, board), group in df.groupby(['tournament_date', 'board_no']):
-        # Din declarer og lead
-        your_decl = group['decl'].iloc[0] if len(group) > 0 else None
-        your_lead = group['lead'].iloc[0] if len(group) > 0 else None
-        your_side = group['Declarer_Side'].iloc[0] if len(group) > 0 else None
+    for _, row in df_a_only.iterrows():
+        # Assign roller
+        role_info = assign_roles(row, henrik, per)
         
-        # Fleste andre: hvem var declarer?
-        declarer_counts = group['decl'].value_counts()
-        field_decl = declarer_counts.index[0] if len(declarer_counts) > 0 else None
-        field_decl_count = declarer_counts.iloc[0] if len(declarer_counts) > 0 else 0
-        field_decl_pct = (field_decl_count / len(group) * 100) if len(group) > 0 else 0
+        # Kontrakt info
+        contract = row.get('contract', '')
         
-        # Typisk lead
-        lead_counts = group['lead'].value_counts()
-        field_lead = lead_counts.index[0] if len(lead_counts) > 0 else None
-        field_lead_count = lead_counts.iloc[0] if len(lead_counts) > 0 else 0
-        field_lead_pct = (field_lead_count / len(group) * 100) if len(group) > 0 else 0
+        # Row letter (A, B, C fra 'row' kolonne eller default A)
+        row_letter = row.get('row', 'A')
+        
+        # Din side (Henrik+Per's side baseret på deres positioner)
+        henrik_pos = role_info['henrik_position']
+        per_pos = role_info['per_position']
+        
+        # Bestem din side baseret på hvem der var declarer blandt jer
+        your_contract_side = None
+        if role_info['henrik_role'] == 'Declarer':
+            your_contract_side = get_side(henrik_pos)
+        elif role_info['per_role'] == 'Declarer':
+            your_contract_side = get_side(per_pos)
+        elif role_info['henrik_role'] in ['Dummy', 'Leader', 'Defender']:
+            your_contract_side = get_side(henrik_pos)
+        elif role_info['per_role'] in ['Dummy', 'Leader', 'Defender']:
+            your_contract_side = get_side(per_pos)
+        
+        # Felt's side (baseret på feltet's declarer)
+        declarer_pos = row.get('decl')
+        field_contract_side = get_side(declarer_pos) if declarer_pos else None
+        
+        # Contract side mismatch
+        contract_side_mismatch = (your_contract_side != field_contract_side) if your_contract_side and field_contract_side else None
+        
+        # Lead (kun relevant hvis en af dem er leader)
+        your_lead = None
+        if role_info['is_henrik_leader'] or role_info['is_per_leader']:
+            your_lead = row.get('lead')
+        
+        # Declarer mismatch
+        declarer_in_field = row.get('decl')
+        declarer_in_your_play = None
+        
+        # Find hvem var declarer i jeres spil
+        if role_info['henrik_role'] == 'Declarer':
+            declarer_in_your_play = role_info['henrik_position']
+        elif role_info['per_role'] == 'Declarer':
+            declarer_in_your_play = role_info['per_position']
+        
+        declarer_mismatch = (declarer_in_your_play != declarer_in_field) if declarer_in_your_play and declarer_in_field else None
         
         # Performance
-        your_pct = group['pct_NS'].mean()
-        expected_pct = group['expected_pct'].iloc[0]
-        performance = your_pct - expected_pct
+        performance = row.get('pct', None)
         
-        # Declarer-mismatch?
-        declarer_mismatch = (your_decl != field_decl)
+        # Board Type (fra Phase 2.1)
+        board_type = row.get('Board_Type', '')
+        competitive = row.get('competitive_flag', False)
         
-        # Hvad er risikoen ved at skifte declarer?
-        # Hvis du havde anden declarer, fik du andet udspil
-        lead_mismatch = (your_lead != field_lead)
-        
-        declarer_analysis.append({
-            'tournament_date': date,
-            'board_no': board,
-            'contract': group['contract_norm'].iloc[0],
-            'your_declarer': your_decl,
-            'your_side': your_side,
+        rows.append({
+            'tournament_date': row.get('tournament_date'),
+            'board_no': row.get('board_no'),
+            'row': row_letter,
+            'contract': contract,
+            'henrik_position': role_info['henrik_position'],
+            'per_position': role_info['per_position'],
+            'henrik_role': role_info['henrik_role'],
+            'per_role': role_info['per_role'],
+            'your_contract_side': your_contract_side,
+            'field_contract_side': field_contract_side,
+            'contract_side_mismatch': contract_side_mismatch,
+            'is_henrik_leader': role_info['is_henrik_leader'],
+            'is_per_leader': role_info['is_per_leader'],
             'your_lead': your_lead,
-            'field_declarer': field_decl,
-            'field_declarer_count': field_decl_count,
-            'field_declarer_pct': field_decl_pct,
-            'field_lead': field_lead,
-            'field_lead_count': field_lead_count,
-            'field_lead_pct': field_lead_pct,
-            'your_pct': your_pct,
-            'expected_pct': expected_pct,
-            'performance': performance,
             'declarer_mismatch': declarer_mismatch,
-            'lead_mismatch': lead_mismatch,
-            'num_hands': len(group),
-            'Board_Type': group['Board_Type'].iloc[0],
-            'competitive_flag': group['competitive_flag'].iloc[0],
+            'performance': performance,
+            'board_type': board_type,
+            'competitive': competitive,
         })
     
-    report = pd.DataFrame(declarer_analysis)
-    
-    # Sorter efter declarer_mismatch + performance
-    report = report.sort_values(
-        ['declarer_mismatch', 'performance'],
-        ascending=[False, True],  # Mismatch først, så worst performance
-        na_position='last'
-    )
-    
-    print(f"✓ Declarer Analysis: {len(report)} boards")
-    print(f"  Boards med declarer-mismatch: {report['declarer_mismatch'].sum()}")
-    print(f"  Boards med lead-mismatch: {report['lead_mismatch'].sum()}")
-    print(f"  Boards med begge mismatches: {(report['declarer_mismatch'] & report['lead_mismatch']).sum()}")
-    
-    return report
+    df = pd.DataFrame(rows)
+    return df
 
-
-def make_declarer_risk_report(df_declarer: pd.DataFrame) -> pd.DataFrame:
+def make_declarer_risk_report(df_declarer_analysis):
     """
-    Filtrer til højeste risiko-boards: declarer-mismatch + dårlig performance
-    
-    Parameters:
-    -----------
-    df_declarer : pd.DataFrame
-        Output fra make_declarer_analysis()
-    
-    Returns:
-    --------
-    pd.DataFrame
-        Høj-risiko boards sorteret efter performance
+    Lag risiko-rapport: Boards med declarer-mismatch OG dårlig performance
     """
-    
-    if df_declarer.empty:
-        return df_declarer
-    
-    # Høj risiko: declarer-mismatch OG performance < -5%
-    high_risk = df_declarer[
-        (df_declarer['declarer_mismatch']) & 
-        (df_declarer['performance'] < -5)
+    # Høj-risiko: declarer_mismatch=True og performance < -5%
+    high_risk = df_declarer_analysis[
+        (df_declarer_analysis['declarer_mismatch'] == True) &
+        (df_declarer_analysis['performance'] < -5)
     ].copy()
     
+    if high_risk.empty:
+        return pd.DataFrame()
+    
     high_risk = high_risk.sort_values('performance', ascending=True)
-    
-    print(f"\n✓ Høj-risiko boards (declarer-mismatch + performance < -5%): {len(high_risk)}")
-    
     return high_risk
 
-
-def print_declarer_analysis_highlights(df_declarer: pd.DataFrame, top_n: int = 5) -> None:
+def print_declarer_analysis_highlights(df_declarer_analysis, top_n=5):
     """
-    Print vigtigste findings fra declarer analyse.
-    
-    Parameters:
-    -----------
-    df_declarer : pd.DataFrame
-        Output fra make_declarer_analysis()
-    
-    top_n : int
-        Antal top-boards at vise
+    Print highlights fra Declarer Analysis
     """
-    
     print("\n" + "="*80)
-    print("DECLARER ANALYSIS – HØJTLIGTER")
+    print("DECLARER ANALYSIS – HIGHLIGHTS")
     print("="*80)
     
-    # Top N worst performance på declarer-mismatch boards
-    mismatch_boards = df_declarer[df_declarer['declarer_mismatch']].copy()
+    # Boards med declarer mismatch
+    declarer_mismatch = df_declarer_analysis[
+        df_declarer_analysis['declarer_mismatch'] == True
+    ]
     
-    if not mismatch_boards.empty:
-        print(f"\nTOP {top_n} WORST PERFORMANCE (declarer-mismatch):")
-        print("-"*80)
+    print(f"\nBoards med declarer-mismatch: {len(declarer_mismatch)}")
+    
+    if len(declarer_mismatch) > 0:
+        worst = declarer_mismatch.nsmallest(top_n, 'performance')
+        print(f"\nTOP {top_n} WORST (declarer-mismatch):")
+        print("-" * 80)
         
-        for idx, (_, row) in enumerate(mismatch_boards.head(top_n).iterrows(), 1):
-            print(f"\n{idx}. {row['tournament_date']} – Board {row['board_no']}")
+        for idx, (_, row) in enumerate(worst.iterrows(), 1):
+            print(f"\n{idx}. {row['tournament_date'].date()} – Board {row['board_no']} (Row {row['row']})")
             print(f"   Kontrakt: {row['contract']}")
-            print(f"   Din declarer: {row['your_declarer']} ({row['your_side']})")
-            print(f"   Felt declarer: {row['field_declarer']} ({row['field_declarer_pct']:.0f}%)")
-            print(f"   Dit udspil: {row['your_lead']}")
-            print(f"   Felt udspil: {row['field_lead']} ({row['field_lead_pct']:.0f}%)")
-            print(f"   Performance: {row['performance']:+.1f}% (du: {row['your_pct']:.1f}% vs expected: {row['expected_pct']:.1f}%)")
+            print(f"   Henrik: {row['henrik_role']} ({row['henrik_position']})")
+            print(f"   Per: {row['per_role']} ({row['per_position']})")
+            print(f"   Din side: {row['your_contract_side']}, Felt: {row['field_contract_side']}")
+            print(f"   Performance: {row['performance']:.1f}%")
             
-            if row['lead_mismatch']:
-                print(f"   ⚠️  UDSPIL-MISMATCH! Andet udspil pga. anden declarer")
-            else:
-                print(f"   ℹ️  Samme udspil, men forkert declarer påvirkede spillet")
+            if row['is_henrik_leader']:
+                print(f"   Henrik var Leader, spillede: {row['your_lead']}")
+            if row['is_per_leader']:
+                print(f"   Per var Leader, spillede: {row['your_lead']}")
+            
+            if row['contract_side_mismatch']:
+                print(f"   ⚠️  CONTRACT-SIDE MISMATCH!")
     
     # Boards uden mismatch men dårlig performance
-    no_mismatch_bad = df_declarer[
-        (~df_declarer['declarer_mismatch']) & 
-        (df_declarer['performance'] < -5)
-    ].sort_values('performance')
+    no_mismatch_bad = df_declarer_analysis[
+        (df_declarer_analysis['declarer_mismatch'] != True) &
+        (df_declarer_analysis['performance'] < -5)
+    ]
     
-    if not no_mismatch_bad.empty:
-        print(f"\n\nBOARDS UDEN DECLARER-MISMATCH MEN DÅRLIG PERFORMANCE (< -5%):")
-        print("-"*80)
+    if len(no_mismatch_bad) > 0:
+        print(f"\n\nBoards uden mismatch men dårlig performance (< -5%):")
+        print("-" * 80)
+        worst_no_mismatch = no_mismatch_bad.nsmallest(top_n, 'performance')
         
-        for idx, (_, row) in enumerate(no_mismatch_bad.head(3).iterrows(), 1):
-            print(f"\n{idx}. {row['tournament_date']} – Board {row['board_no']}")
+        for idx, (_, row) in enumerate(worst_no_mismatch.iterrows(), 1):
+            print(f"\n{idx}. {row['tournament_date'].date()} – Board {row['board_no']} (Row {row['row']})")
             print(f"   Kontrakt: {row['contract']}")
-            print(f"   Declarer: {row['your_declarer']} (samme som felt)")
-            print(f"   Performance: {row['performance']:+.1f}%")
-            print(f"   → Spil-problem, ikke melding-problem")
+            print(f"   Henrik: {row['henrik_role']} ({row['henrik_position']})")
+            print(f"   Per: {row['per_role']} ({row['per_position']})")
+            print(f"   Performance: {row['performance']:.1f}% (spil-problem)")
     
     print("\n" + "="*80)

@@ -2,7 +2,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from bridge.crawler import get_recent_tournaments
-from bridge.scraper import to_spilresultater_url, scrape_spilresultater
+from bridge.scraper import scrape_spilresultater
+
 from bridge.features import add_hand_features
 
 from bridge.analysis import (
@@ -48,30 +49,50 @@ def main():
     print("Starter crawler + scraper + analyse...")
     print("Cutoff:", CUTOFF_DATE.date())
 
-    resultater_date_map = get_recent_tournaments(CUTOFF_DATE)
-    if not resultater_date_map:
+    # ✅ NY CRAWLER: Returner list of tournaments med sections
+    tournaments = get_recent_tournaments(CUTOFF_DATE)
+    
+    if not tournaments:
         print("Ingen turneringer fundet indenfor cutoff.")
         return
 
-    print("Antal turneringer fundet:", len(resultater_date_map))
+    print(f"Antal turneringer fundet: {len(tournaments)}")
 
     all_rows = []
 
-    for i, (res_url, tdate) in enumerate(sorted(resultater_date_map.items(), key=lambda x: x[1]), 1):
-        spil_url = to_spilresultater_url(res_url)
-        print(f"\n({i}/{len(resultater_date_map)}) {tdate.date()}  Scraper: {spil_url}")
+    for t_idx, tournament in enumerate(tournaments, 1):
+        tournament_id = tournament['tournament_id']
+        tdate = tournament['date']
+        sections = tournament['sections']
+        
+        print(f"\n({t_idx}/{len(tournaments)}) {tdate.date()} – Turnering {tournament_id}")
+        print(f"  Sections fundet: {', '.join([s['name'] for s in sections])}")
 
-        try:
-            rows = scrape_spilresultater(
-                spil_url,
-                tdate,
-                include_hands=True,
-                debug_hands=False,
-            )
-            print("  ... rækker:", len(rows))
-            all_rows.extend(rows)
-        except Exception as e:
-            print("  !!! Fejl ved scraping:", e)
+        # ✅ SCRAPE ALLE SECTIONS (A, B, C, D...)
+        for section in sections:
+            section_name = section['name']
+            # ✅ VIGTIG ÆNDRING: Brug spilresultater_url i stedet for url
+            section_url = section['spilresultater_url']
+            
+            print(f"  → Scraper section {section_name}: {section_url}")
+            
+            try:
+                rows = scrape_spilresultater(
+                    section_url,
+                    tdate,
+                    include_hands=True,
+                    debug_hands=False,
+                )
+                
+                # ✅ TILFØJ SECTION KOLONNE
+                for row in rows:
+                    row['section'] = section_name
+                
+                print(f"      ✓ {len(rows)} rækker")
+                all_rows.extend(rows)
+                
+            except Exception as e:
+                print(f"      !!! Fejl ved scraping: {e}")
 
     if not all_rows:
         print("Ingen data fundet.")
@@ -79,41 +100,59 @@ def main():
 
     df_all = pd.DataFrame(all_rows)
 
-    print("Tilføjer hånd-features...")
+    print(f"\n✓ I alt {len(df_all)} rækker fra alle sections")
+    print(f"  Sections: {df_all['section'].unique().tolist()}")
+
+    print("\nTilføjer hånd-features...")
     df_all = add_hand_features(df_all)
 
-    # ✅ TILFØJ PHASE 2.1 REFERENCE-LAG
-    print("Tilføjer Phase 2.1 reference-lag...")
+    # ✅ TILFØJ PHASE 2.1 REFERENCE-LAG (bruger ALLE sections som reference)
+    print("Tilføjer Phase 2.1 reference-lag (fra alle sections A+B+C+D...)...")
     df_all = add_phase21_fields(df_all, n_min=12)
     print("  ✓ Phase 2.1 felt-data beregnet")
     print(f"    - Board Types fundet: {df_all['Board_Type'].value_counts().to_dict()}")
     print(f"    - Split boards (competitive): {df_all['competitive_flag'].sum()}")
 
-    # ✅ BOARD REVIEW ANALYSE
-    print("\nGenererer Board Review rapporter...")
-    df_board_review_all = make_board_review_all_hands(df_all)
-    df_board_review_summary = make_board_review_summary(df_all)
+    # ✅ BOARD REVIEW ANALYSE (kun A-rækken)
+    print("\nGenererer Board Review rapporter (kun A-rækken)...")
+    df_a_only = df_all[df_all['section'] == 'A'].copy()
+    
+    if len(df_a_only) == 0:
+        print("Ingen data fra A-rækken!")
+        return
+    
+    df_board_review_all = make_board_review_all_hands(df_a_only)
+    df_board_review_summary = make_board_review_summary(df_a_only)
     
     # Statistik
     review_stats = board_review_statistics(df_board_review_all, df_board_review_summary)
     print_board_review_stats(review_stats)
 
-    # ✅ DECLARER ANALYSIS
-    print("\nGenererer Declarer Analysis...")
-    df_declarer_analysis = make_declarer_analysis(df_all)
+    # ✅ DECLARER ANALYSIS (kun A-rækken)
+    print("\nGenererer Declarer Analysis (kun A-rækken)...")
+    df_declarer_analysis = make_declarer_analysis(df_a_only)
+    
+    # ✅ SORTERING: tournament_date + board_no
+    df_declarer_analysis = df_declarer_analysis.sort_values(
+        ['tournament_date', 'board_no'],
+        ascending=[False, True]
+    ).reset_index(drop=True)
+    
     df_declarer_risk = make_declarer_risk_report(df_declarer_analysis)
     print_declarer_analysis_highlights(df_declarer_analysis, top_n=5)
 
-    # Kun rækker hvor I begge er med
-    df_pair = df_all[
-        df_all.apply(
+    # Kun rækker hvor I begge er med (A-rækken)
+    df_pair = df_a_only[
+        df_a_only.apply(
             lambda r: (HENRIK in [r["ns1"], r["ns2"], r["ew1"], r["ew2"]]) and
                       (PER in [r["ns1"], r["ns2"], r["ew1"], r["ew2"]]),
             axis=1
         )
     ].copy()
 
-    # Roller + pct (+ statusfelter, hvis din analysis.py har dem)
+    print(f"\nHenrik+Per sammen i A-rækken: {len(df_pair)} rækker")
+
+    # Roller + pct
     df_pair = add_roles_and_pct(df_pair, henrik=HENRIK, per=PER)
 
     # Klassiske ark
@@ -126,6 +165,7 @@ def main():
     df_quarterly = make_quarterly_summary_with_ci(df_pair)
 
     # Field data: defence + declarer (alle par, min 50 boards)
+    # ✅ Brug hele df_all (A+B+C) som reference!
     df_field_defense = make_pair_field_report(df_all, min_boards=50)
     df_field_declarer = make_pair_declarer_report(df_all, min_boards=50)
 
@@ -137,6 +177,7 @@ def main():
         date_format="yyyy-mm-dd"
     ) as writer:
         df_all.to_excel(writer, sheet_name="All_Rows_Raw", index=False)
+        df_a_only.to_excel(writer, sheet_name="A_Section_Only", index=False)
         df_pair.to_excel(writer, sheet_name="HF_PF_Only", index=False)
         df_declarer.to_excel(writer, sheet_name="Declarer_Games", index=False)
         df_summary.to_excel(writer, sheet_name="Summary", index=False)
@@ -145,15 +186,15 @@ def main():
         df_evening_matrix.to_excel(writer, sheet_name="Evening_Role_Matrix", index=False)
         df_quarterly.to_excel(writer, sheet_name="Quarterly_CI", index=False)
 
-        # ✅ Field data
+        # ✅ Field data (fra hele datasættet A+B+C)
         df_field_defense.to_excel(writer, sheet_name="Field_Data_Defense", index=False)
         df_field_declarer.to_excel(writer, sheet_name="Field_Data_Declarer", index=False)
 
-        # ✅ Board Review
+        # ✅ Board Review (kun A-rækken)
         df_board_review_all.to_excel(writer, sheet_name="Board_Review_AllHands", index=False)
         df_board_review_summary.to_excel(writer, sheet_name="Board_Review_Summary", index=False)
 
-        # ✅ Declarer Analysis
+        # ✅ Declarer Analysis (kun A-rækken, sorteret)
         df_declarer_analysis.to_excel(writer, sheet_name="Declarer_Analysis", index=False)
         if not df_declarer_risk.empty:
             df_declarer_risk.to_excel(writer, sheet_name="Declarer_Risk", index=False)
@@ -161,9 +202,10 @@ def main():
     print("\n" + "="*60)
     print("ANALYSE FÆRDIG!")
     print("="*60)
-    print(f"Rå rækker totalt:          {len(df_all)}")
-    print(f"Rækker hvor I begge er med: {len(df_pair)}")
-    print(f"Excel gemt som:            {OUTPUT_FILE}")
+    print(f"Total rækker (alle sections):  {len(df_all)}")
+    print(f"A-rækken rækker:               {len(df_a_only)}")
+    print(f"Henrik+Per sammen i A:         {len(df_pair)}")
+    print(f"Excel gemt som:                {OUTPUT_FILE}")
     print("="*60)
 
 
