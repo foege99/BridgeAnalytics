@@ -86,9 +86,11 @@ def assign_roles(row, henrik, per):
         'is_per_leader': (per_pos == leader_pos),
     }
 
-def make_declarer_analysis(df_a_only, henrik="Henrik Friis", per="Per Føge Jensen"):
+def make_declarer_analysis(df_pair, henrik="Henrik Friis", per="Per Føge Jensen"):
     """
     Lav detaljeret Declarer Analysis for Henrik+Per
+    
+    Input: df_pair (kun boards hvor begge spiller)
     
     Kolonner:
     - tournament_date, board_no, row (A/B/C), contract
@@ -104,7 +106,7 @@ def make_declarer_analysis(df_a_only, henrik="Henrik Friis", per="Per Føge Jens
     
     rows = []
     
-    for _, row in df_a_only.iterrows():
+    for _, row in df_pair.iterrows():
         # Assign roller
         role_info = assign_roles(row, henrik, per)
         
@@ -153,16 +155,21 @@ def make_declarer_analysis(df_a_only, henrik="Henrik Friis", per="Per Føge Jens
         
         declarer_mismatch = (declarer_in_your_play != declarer_in_field) if declarer_in_your_play and declarer_in_field else None
         
-        # Performance
-        performance = row.get('pct', None)
-        
-        # Board Type (fra Phase 2.1)
-        board_type = row.get('Board_Type', '')
-        competitive = row.get('competitive_flag', False)
+        # Performance (Henrik eller Per's percentage)
+        performance = None
+        if role_info['henrik_role'] == 'Declarer':
+            performance = row.get('Henrik_pct')
+        elif role_info['per_role'] == 'Declarer':
+            performance = row.get('Per_pct')
+        # Hvis de er Dummy/Leader/Defender, tager vi deres pct fra match-udsagn
+        elif role_info['henrik_role']:
+            performance = row.get('Henrik_pct')
+        elif role_info['per_role']:
+            performance = row.get('Per_pct')
         
         rows.append({
             'tournament_date': row.get('tournament_date'),
-            'board_no': row.get('board_no'),
+            'board_no': row.get('board'),
             'row': row_letter,
             'contract': contract,
             'henrik_position': role_info['henrik_position'],
@@ -177,8 +184,6 @@ def make_declarer_analysis(df_a_only, henrik="Henrik Friis", per="Per Føge Jens
             'your_lead': your_lead,
             'declarer_mismatch': declarer_mismatch,
             'performance': performance,
-            'board_type': board_type,
-            'competitive': competitive,
         })
     
     df = pd.DataFrame(rows)
@@ -226,7 +231,7 @@ def print_declarer_analysis_highlights(df_declarer_analysis, top_n=5):
             print(f"   Henrik: {row['henrik_role']} ({row['henrik_position']})")
             print(f"   Per: {row['per_role']} ({row['per_position']})")
             print(f"   Din side: {row['your_contract_side']}, Felt: {row['field_contract_side']}")
-            print(f"   Performance: {row['performance']:.1f}%")
+            print(f"   Performance: {row['performance']:.1f}%" if row['performance'] is not None else "   Performance: N/A")
             
             if row['is_henrik_leader']:
                 print(f"   Henrik var Leader, spillede: {row['your_lead']}")
@@ -252,6 +257,7 @@ def print_declarer_analysis_highlights(df_declarer_analysis, top_n=5):
             print(f"   Kontrakt: {row['contract']}")
             print(f"   Henrik: {row['henrik_role']} ({row['henrik_position']})")
             print(f"   Per: {row['per_role']} ({row['per_position']})")
-            print(f"   Performance: {row['performance']:.1f}% (spil-problem)")
+            print(f"   Performance: {row['performance']:.1f}%" if row['performance'] is not None else "   Performance: N/A")
+            print(f"   (spil-problem, ikke melding-problem)")
     
     print("\n" + "="*80)

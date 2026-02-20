@@ -59,6 +59,7 @@ def main():
     print(f"Antal turneringer fundet: {len(tournaments)}")
 
     all_rows = []
+    tournaments_processed = 0
 
     for t_idx, tournament in enumerate(tournaments, 1):
         tournament_id = tournament['tournament_id']
@@ -71,7 +72,6 @@ def main():
         # ✅ SCRAPE ALLE SECTIONS (A, B, C, D...)
         for section in sections:
             section_name = section['name']
-            # ✅ VIGTIG ÆNDRING: Brug spilresultater_url i stedet for url
             section_url = section['spilresultater_url']
             
             print(f"  → Scraper section {section_name}: {section_url}")
@@ -84,7 +84,7 @@ def main():
                     debug_hands=False,
                 )
                 
-                # ✅ TILFØJ SECTION KOLONNE
+                # ✅ TILFØJ SECTION KOLONNE (noter: 'row' kommer allerede fra scraper!)
                 for row in rows:
                     row['section'] = section_name
                 
@@ -94,13 +94,20 @@ def main():
             except Exception as e:
                 print(f"      !!! Fejl ved scraping: {e}")
 
+        tournaments_processed += 1
+        
+        # ✅ EARLY EXIT: Hvis CUTOFF <= 7 dage, stop efter 1-2 turneringer
+        if (CUTOFF_DATE.date() >= (datetime.now() - timedelta(days=7)).date()) and tournaments_processed >= 2:
+            print(f"\n⏸ CUTOFF <= 7 dage – stopper efter {tournaments_processed} turneringer")
+            break
+
     if not all_rows:
         print("Ingen data fundet.")
         return
 
     df_all = pd.DataFrame(all_rows)
 
-    print(f"\n✓ I alt {len(df_all)} rækker fra alle sections")
+    print(f"\n✓ I alt {len(df_all)} rækker fra {tournaments_processed} turneringer")
     print(f"  Sections: {df_all['section'].unique().tolist()}")
 
     print("\nTilføjer hånd-features...")
@@ -126,22 +133,11 @@ def main():
     
     # Statistik
     review_stats = board_review_statistics(df_board_review_all, df_board_review_summary)
+    print(f"  ✓ Board Review: {len(df_board_review_all)} boards med hand-records")
     print_board_review_stats(review_stats)
 
     # ✅ DECLARER ANALYSIS (kun A-rækken)
-    print("\nGenererer Declarer Analysis (kun A-rækken)...")
-    df_declarer_analysis = make_declarer_analysis(df_a_only)
-    
-    # ✅ SORTERING: tournament_date + board_no
-    df_declarer_analysis = df_declarer_analysis.sort_values(
-        ['tournament_date', 'board_no'],
-        ascending=[False, True]
-    ).reset_index(drop=True)
-    
-    df_declarer_risk = make_declarer_risk_report(df_declarer_analysis)
-    print_declarer_analysis_highlights(df_declarer_analysis, top_n=5)
-
-    # Kun rækker hvor I begge er med (A-rækken)
+    print("\nGenererer Declarer Analysis...")
     df_pair = df_a_only[
         df_a_only.apply(
             lambda r: (HENRIK in [r["ns1"], r["ns2"], r["ew1"], r["ew2"]]) and
@@ -150,63 +146,87 @@ def main():
         )
     ].copy()
 
-    print(f"\nHenrik+Per sammen i A-rækken: {len(df_pair)} rækker")
+    if len(df_pair) == 0:
+        print("  (Ingen boards hvor Henrik og Per spiller sammen i A-rækken)")
+        df_declarer_analysis = pd.DataFrame()
+    else:
+        # Tilføj roller + pct
+        df_pair = add_roles_and_pct(df_pair, henrik=HENRIK, per=PER)
+        
+        # Lav Declarer Analysis
+        df_declarer_analysis = make_declarer_analysis(df_pair, henrik=HENRIK, per=PER)
+        
+        print(f"  ✓ Declarer Analysis: {len(df_declarer_analysis)} boards")
+        
+        # Print highlights
+        print_declarer_analysis_highlights(df_declarer_analysis, top_n=5)
 
-    # Roller + pct
-    df_pair = add_roles_and_pct(df_pair, henrik=HENRIK, per=PER)
+    # ✅ KLASSISKE RAPPORTER (fra hele A-rækken, ikke kun hvor de spiller sammen)
+    print("\nGenererer klassiske rapporter...")
+    
+    # Filter til kun boards hvor de spiller sammen
+    df_pair_all = df_a_only[
+        df_a_only.apply(
+            lambda r: (HENRIK in [r["ns1"], r["ns2"], r["ew1"], r["ew2"]]) and
+                      (PER in [r["ns1"], r["ns2"], r["ew1"], r["ew2"]]),
+            axis=1
+        )
+    ].copy()
+    
+    if len(df_pair_all) > 0:
+        df_pair_all = add_roles_and_pct(df_pair_all, henrik=HENRIK, per=PER)
+        
+        df_declarer = make_declarer_list(df_pair_all)
+        df_summary = make_role_summary(df_pair_all)
+        df_tournament = make_tournament_summary(df_pair_all)
+        df_evening_matrix = make_evening_role_matrix(df_pair_all)
+        df_quarterly = make_quarterly_summary_with_ci(df_pair_all)
+        
+        print(f"  ✓ Klassiske rapporter genereret")
+    else:
+        df_declarer = pd.DataFrame()
+        df_summary = pd.DataFrame()
+        df_tournament = pd.DataFrame()
+        df_evening_matrix = pd.DataFrame()
+        df_quarterly = pd.DataFrame()
+        print("  (Ingen data til klassiske rapporter)")
 
-    # Klassiske ark
-    df_declarer = make_declarer_list(df_pair)
-    df_summary = make_role_summary(df_pair)
-    df_tournament = make_tournament_summary(df_pair)
-
-    # Nye ark
-    df_evening_matrix = make_evening_role_matrix(df_pair)
-    df_quarterly = make_quarterly_summary_with_ci(df_pair)
-
-    # Field data: defence + declarer (alle par, min 50 boards)
-    # ✅ Brug hele df_all (A+B+C) som reference!
+    # ✅ FIELD REPORTS (alle par, fra hele feltet)
+    print("\nGenererer Field Reports...")
     df_field_defense = make_pair_field_report(df_all, min_boards=50)
     df_field_declarer = make_pair_declarer_report(df_all, min_boards=50)
+    print(f"  ✓ Field Reports: {len(df_field_defense)} par i defense, {len(df_field_declarer)} par i declarer")
 
-    print("\nSkriver Excel-fil...")
-    with pd.ExcelWriter(
-        OUTPUT_FILE,
-        engine="xlsxwriter",
-        datetime_format="yyyy-mm-dd",
-        date_format="yyyy-mm-dd"
-    ) as writer:
-        df_all.to_excel(writer, sheet_name="All_Rows_Raw", index=False)
-        df_a_only.to_excel(writer, sheet_name="A_Section_Only", index=False)
-        df_pair.to_excel(writer, sheet_name="HF_PF_Only", index=False)
-        df_declarer.to_excel(writer, sheet_name="Declarer_Games", index=False)
-        df_summary.to_excel(writer, sheet_name="Summary", index=False)
-        df_tournament.to_excel(writer, sheet_name="Tournament_Summary", index=False)
-
-        df_evening_matrix.to_excel(writer, sheet_name="Evening_Role_Matrix", index=False)
-        df_quarterly.to_excel(writer, sheet_name="Quarterly_CI", index=False)
-
-        # ✅ Field data (fra hele datasættet A+B+C)
-        df_field_defense.to_excel(writer, sheet_name="Field_Data_Defense", index=False)
-        df_field_declarer.to_excel(writer, sheet_name="Field_Data_Declarer", index=False)
-
-        # ✅ Board Review (kun A-rækken)
-        df_board_review_all.to_excel(writer, sheet_name="Board_Review_AllHands", index=False)
-        df_board_review_summary.to_excel(writer, sheet_name="Board_Review_Summary", index=False)
-
-        # ✅ Declarer Analysis (kun A-rækken, sorteret)
-        df_declarer_analysis.to_excel(writer, sheet_name="Declarer_Analysis", index=False)
-        if not df_declarer_risk.empty:
-            df_declarer_risk.to_excel(writer, sheet_name="Declarer_Risk", index=False)
-
-    print("\n" + "="*60)
-    print("ANALYSE FÆRDIG!")
-    print("="*60)
-    print(f"Total rækker (alle sections):  {len(df_all)}")
-    print(f"A-rækken rækker:               {len(df_a_only)}")
-    print(f"Henrik+Per sammen i A:         {len(df_pair)}")
-    print(f"Excel gemt som:                {OUTPUT_FILE}")
-    print("="*60)
+    # ✅ SKRIV EXCEL
+    print(f"\nSkriver Excel: {OUTPUT_FILE}")
+    with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
+        # Board Review
+        df_board_review_all.to_excel(writer, sheet_name='Board_Review_All', index=False)
+        df_board_review_summary.to_excel(writer, sheet_name='Board_Review_Summary', index=False)
+        
+        # Declarer Analysis
+        if not df_declarer_analysis.empty:
+            df_declarer_analysis.to_excel(writer, sheet_name='Declarer_Analysis', index=False)
+        
+        # Klassiske rapporter
+        if not df_declarer.empty:
+            df_declarer.to_excel(writer, sheet_name='Declarer_List', index=False)
+        if not df_summary.empty:
+            df_summary.to_excel(writer, sheet_name='Role_Summary', index=False)
+        if not df_tournament.empty:
+            df_tournament.to_excel(writer, sheet_name='Tournament_Summary', index=False)
+        if not df_evening_matrix.empty:
+            df_evening_matrix.to_excel(writer, sheet_name='Evening_Matrix', index=False)
+        if not df_quarterly.empty:
+            df_quarterly.to_excel(writer, sheet_name='Quarterly_Summary', index=False)
+        
+        # Field Reports
+        if not df_field_defense.empty:
+            df_field_defense.to_excel(writer, sheet_name='Field_Defense', index=False)
+        if not df_field_declarer.empty:
+            df_field_declarer.to_excel(writer, sheet_name='Field_Declarer', index=False)
+    
+    print(f"✅ Analyse færdig! Output: {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":

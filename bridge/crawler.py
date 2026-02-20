@@ -77,6 +77,8 @@ def get_recent_tournaments(cutoff_date):
     
     For hver turnering, find ALLE sections (A, B, C...)
     
+    ✅ EARLY STOP: Stopper når vi når turneringer ældre end cutoff_date
+    
     Returns:
     --------
     list of dict:
@@ -108,6 +110,7 @@ def get_recent_tournaments(cutoff_date):
     ]
 
     tournaments = {}  # Key: tournament_id, Value: {'date': ..., 'urls': []}
+    reached_cutoff = False  # ✅ Flag for early stopping
 
     for turl in tournament_pages:
         print(f"  Parsing: {turl}")
@@ -118,10 +121,13 @@ def get_recent_tournaments(cutoff_date):
 
         date = parse_date_from_title(h1.get_text())
         
-        # ✅ CUTOFF-CHECK TIDLIGT: Spring over hvis for gammel
+        # ✅ CUTOFF-CHECK: Hvis for gammel, mark og stop loop
         if not date or date < cutoff_date:
             print(f"    → Skipped (older than {cutoff_date.date()})")
-            continue
+            reached_cutoff = True
+            break  # ✅ STOP HER – ingen grund til at parse mere
+        
+        print(f"    → {date.date()}")
 
         # Find alle XML-links på turnerings-siden
         for a in tsoup.find_all("a", href=True):
@@ -182,6 +188,9 @@ def get_recent_tournaments(cutoff_date):
             'date': date,
             'sections': sections
         })
+    
+    if reached_cutoff:
+        print(f"✅ Early stop: Nåede cutoff-dato ({cutoff_date.date()})")
     
     return result
 

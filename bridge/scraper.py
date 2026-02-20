@@ -47,6 +47,28 @@ def safe_pct(val: str):
     except:
         return None
 
+def extract_row_from_page(soup) -> str:
+    """
+    Parse row letter (A/B/C) fra siden indholdet.
+    
+    Søger efter tekst som: "Resultater efter X sektion YYYYMMDDAFTEN, A-rækken"
+    
+    Returns: 'A', 'B', 'C', eller default 'A' hvis ikke found
+    """
+    # Få hele sidelinnhold
+    page_text = soup.get_text()
+    
+    # Søg efter "A-rækken", "B-rækken", "C-rækken"
+    if 'A-rækken' in page_text:
+        return 'A'
+    elif 'B-rækken' in page_text:
+        return 'B'
+    elif 'C-rækken' in page_text:
+        return 'C'
+    
+    # Default til A hvis ikke found
+    return 'A'
+
 # ----------------------------
 # Kontrakt parsing
 # ----------------------------
@@ -86,160 +108,30 @@ def normalize_ranks(txt: str) -> str:
     return "".join(RANK_TRANSLATE.get(ch, ch) for ch in t)
 
 def hand_from_4_suits(sp: str, he: str, di: str, cl: str) -> str:
-    return f"{normalize_ranks(sp)}.{normalize_ranks(he)}.{normalize_ranks(di)}.{normalize_ranks(cl)}"
-
-def _looks_like_cards(token: str) -> bool:
-    """
-    True hvis token ligner en kortstreng, fx 'AKT72' i DK-form: 'EKDTB...' eller tal.
-    Tillader tom streng (void) og '-' som void.
-    """
-    if token is None:
-        return False
-    t = clean(token).replace(" ", "")
-    if t == "" or t == "-" or t == "—":
-        return True
-    # må kun bestå af rank-tegn (DK)
-    return all(ch in RANK_CHARS_DK for ch in t)
-
-def _tokenize_suit_lines(game_div) -> list:
-    """
-    Bygger en liste af suit-linjer i standard form:
-      '♠ AKT7', '♥ E73', ...
-
-    Den håndterer både:
-      - '♠ AKT7' som én tekst
-      - '♠' som token efterfulgt af 'AKT7' som næste token
-    """
-    tokens = [clean(t) for t in game_div.stripped_strings]
-    lines = []
-    i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        if not tok:
-            i += 1
-            continue
-
-        # Case 1: token starter med suit, fx "♠ AKT7" eller bare "♠"
-        if tok[0] in SUIT_CHARS:
-            suit = tok[0]
-            rest = clean(tok[1:])
-
-            # Hvis rest allerede indeholder kort, brug den
-            if rest and _looks_like_cards(rest):
-                lines.append(suit + " " + rest)
-                i += 1
-                continue
-
-            # Hvis token er bare suit (eller rest ikke ligner kort), kig på næste token
-            nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
-            if _looks_like_cards(nxt):
-                # nxt kan være '' / '-' (void) eller faktiske kort
-                payload = "" if nxt in ["", "-", "—"] else nxt
-                lines.append(suit + (" " + payload if payload else ""))
-                i += 2
-                continue
-
-            # Ellers: det var nok en overskrift/pynt -> ignorer
-            i += 1
-            continue
-
-        i += 1
-
-    return lines
-
-def _suit_payload(line: str) -> str:
-    # "♠ AKT7" -> "AKT7", "♣" -> ""
-    l = clean(line)
-    if not l:
-        return ""
-    if l[0] in SUIT_CHARS:
-        return clean(l[1:])
-    return ""
-
-def _count_cards(dot: str) -> int:
-    return len((dot or "").replace(".", ""))
-
-def _expand_cards(dot: str) -> set:
-    if not dot:
-        return set()
-    suits = dot.split(".")
-    out = set()
-    for suit_letter, cards in zip(["S", "H", "D", "C"], suits):
-        for r in cards:
-            out.add(f"{suit_letter}{r}")
-    return out
-
-def _score_hands(hands4: list) -> tuple:
-    all_cards = set()
-    total = 0
-    for h in hands4:
-        total += _count_cards(h)
-        all_cards |= _expand_cards(h)
-    return (len(all_cards), total)
+    """Convert 4-suit hands to dot notation S.H.D.C"""
+    sp = normalize_ranks(sp)
+    he = normalize_ranks(he)
+    di = normalize_ranks(di)
+    cl = normalize_ranks(cl)
+    return f"{sp}.{he}.{di}.{cl}" if any([sp, he, di, cl]) else None
 
 def parse_hands_from_game_div(game_div) -> dict:
-    """
-    Finder bedste 16-linjers sekvens af suit-linjer og bygger 4 hænder.
+    """Parse N/S/Ø/V hands from a game div"""
+    hands = {}
+    for pos in ["N", "S", "Ø", "V"]:
+        div = game_div.select_one(f"div.hand.{pos}")
+        if div:
+            suits = div.select("div.suit")
+            if len(suits) == 4:
+                sp = clean(suits[0].get_text(" ", strip=True))
+                he = clean(suits[1].get_text(" ", strip=True))
+                di = clean(suits[2].get_text(" ", strip=True))
+                cl = clean(suits[3].get_text(" ", strip=True))
+                hands[f"{pos}_hand"] = hand_from_4_suits(sp, he, di, cl)
+    return hands
 
-    Returnerer {} hvis det ikke ser plausibelt ud.
-    """
-    suit_lines_all = _tokenize_suit_lines(game_div)
-    if len(suit_lines_all) < 16:
-        return {}
-
-    best_hands = None
-    best_score = (-1, -1)
-
-    for start in range(0, len(suit_lines_all) - 15):
-        win = suit_lines_all[start:start + 16]
-
-        hands_4 = []
-        for j in range(0, 16, 4):
-            sp = _suit_payload(win[j + 0])
-            he = _suit_payload(win[j + 1])
-            di = _suit_payload(win[j + 2])
-            cl = _suit_payload(win[j + 3])
-            hands_4.append(hand_from_4_suits(sp, he, di, cl))
-
-        uniq, total = _score_hands(hands_4)
-
-        if (uniq, total) > best_score:
-            best_score = (uniq, total)
-            best_hands = hands_4
-
-        if uniq == 52 and total == 52:
-            break
-
-    if not best_hands:
-        return {}
-
-    # Standard layout antagelse: N, V, Ø, S (DBf diagram-layout)
-    n_hand, v_hand, o_hand, s_hand = best_hands[0], best_hands[1], best_hands[2], best_hands[3]
-
-    # Plausibilitet: vi vil se mindst en del kort, ellers var det stadig "pynt"
-    uniq, total = _score_hands([n_hand, o_hand, s_hand, v_hand])
-    if uniq < 30 or total < 30:
-        return {}
-
-    return {"N_hand": n_hand, "Ø_hand": o_hand, "S_hand": s_hand, "V_hand": v_hand}
-
-def _debug_print_handcheck(board: int, h: dict):
-    print(f"\n[DEBUG] Board {board} hænder fundet:")
-    print("  N:", h.get("N_hand"))
-    print("  Ø:", h.get("Ø_hand"))
-    print("  S:", h.get("S_hand"))
-    print("  V:", h.get("V_hand"))
-
-    print("  [DEBUG] 13-kort:",
-          _count_cards(h.get("N_hand")),
-          _count_cards(h.get("Ø_hand")),
-          _count_cards(h.get("S_hand")),
-          _count_cards(h.get("V_hand")))
-
-    all_cards = set()
-    for seat in ["N_hand", "Ø_hand", "S_hand", "V_hand"]:
-        all_cards |= _expand_cards(h.get(seat))
-    print("  [DEBUG] unikke kort:", len(all_cards))
+def _debug_print_handcheck(board: int, hands: dict):
+    print(f"    Board {board} hands: {hands}")
 
 # ----------------------------
 # Hovedscrape
@@ -251,9 +143,18 @@ def scrape_spilresultater(
     include_hands: bool = True,
     debug_hands: bool = False
 ):
+    """
+    Scrape spilresultater from URL.
+    
+    Adds 'row' column based on page content (A/B/C).
+    """
     soup = get_soup(spil_url)
     rows = []
     hands_by_board = {}
+    
+    # Extract row letter from page content
+    row_letter = extract_row_from_page(soup)
+    print(f"    → Detekteret row: {row_letter}")
 
     for game in soup.select("div.game"):
         board_div = game.select_one("div.boardNo")
@@ -306,6 +207,7 @@ def scrape_spilresultater(
             rows.append({
                 "tournament_date": tournament_date.date() if tournament_date else None,
                 "board": board,
+                "row": row_letter,  # ✅ NY: row letter (A/B/C) fra side-indhold
 
                 "ns1": ns_parts[0],
                 "ns2": ns_parts[1],
@@ -333,6 +235,6 @@ def scrape_spilresultater(
             })
 
     if debug_hands and include_hands and not any(hands_by_board.values()):
-        print("\n[DEBUG] Fandt ingen hænder på denne spilresultater-side (sandsynligvis ingen kort i HTML).")
+        print(f"  (ingen hænder parsed)")
 
     return rows

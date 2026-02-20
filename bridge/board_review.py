@@ -27,6 +27,7 @@ def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
     cols_to_keep = [
         'tournament_date',
         'board_no',
+        'row',  # ✅ NY: row letter (A/B/C)
         'contract',
         'contract_norm',
         'double_state',
@@ -61,6 +62,7 @@ def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
     performance_cols = [
         'tournament_date',
         'board_no',
+        'row',  # ✅ NY: row letter
         'contract',
         'expected_pct',
         'pct_NS',
@@ -89,6 +91,7 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
     - Expected pct
     - Gennemsnit forskel
     - Board klassifikation
+    - Row (A/B/C)
     
     Sorteret efter Board_Type (Split først), så efter forskel.
     
@@ -108,6 +111,7 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
     
     # Grupper per board
     grouped = df.groupby(['tournament_date', 'board_no']).agg({
+        'row': 'first',  # ✅ NY: row letter (samme for alle på boardet)
         'contract': 'first',  # Kontrakten (samme for alle på boardet)
         'contract_norm': 'first',
         'field_mode_contract': 'first',
@@ -157,6 +161,7 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
     performance_cols = [
         'tournament_date',
         'board_no',
+        'row',  # ✅ NY: row letter
         'num_hands',
         'contract_actual',
         'expected_pct',
@@ -260,13 +265,13 @@ def print_board_review_stats(stats: dict) -> None:
     if stats['best_board'] is not None:
         best = stats['best_board']
         print(f"\nBEST BOARD:")
-        print(f"  {best['tournament_date']} - Board {best['board_no']}")
+        print(f"  {best['tournament_date']} - Board {best['board_no']} (Row {best['row']})")
         print(f"  Performance: {best['avg_pct_vs_expected']:+.1f}% vs expected")
     
     if stats['worst_board'] is not None:
         worst = stats['worst_board']
         print(f"\nWORST BOARD:")
-        print(f"  {worst['tournament_date']} - Board {worst['board_no']}")
+        print(f"  {worst['tournament_date']} - Board {worst['board_no']} (Row {worst['row']})")
         print(f"  Performance: {worst['avg_pct_vs_expected']:+.1f}% vs expected")
     
     print("\n" + "="*70)
