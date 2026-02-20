@@ -22,13 +22,38 @@ def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
     
     if df.empty:
         return df
-    
-    # Vælg relevante kolonner
-    cols_to_keep = [
+
+    # Kolonnegrupper: performance, hånd-data, reference
+    performance_cols = [
         'tournament_date',
         'board_no',
-        'row',  # ✅ NY: row letter (A/B/C)
+        'row',
         'contract',
+        'expected_pct',
+        'pct_NS',
+        'pct_vs_expected',
+        'pct_vs_expected_abs',
+        'Board_Type',
+        'competitive_flag',
+    ]
+
+    hand_cols = [
+        'N_hand', 'S_hand', 'Ø_hand', 'V_hand',
+        'N_HCP', 'S_HCP', 'Ø_HCP', 'V_HCP', 'NS_HCP', 'ØV_HCP',
+        'N_shape', 'S_shape', 'Ø_shape', 'V_shape',
+        'N_shape_SHDC', 'S_shape_SHDC', 'Ø_shape_SHDC', 'V_shape_SHDC',
+        'N_balanced', 'S_balanced', 'Ø_balanced', 'V_balanced',
+        'N_dist_pts_shortage', 'S_dist_pts_shortage', 'Ø_dist_pts_shortage', 'V_dist_pts_shortage',
+        'N_LTC_adj', 'S_LTC_adj', 'Ø_LTC_adj', 'V_LTC_adj', 'NS_LTC_adj', 'ØV_LTC_adj',
+        'N_controls', 'S_controls', 'Ø_controls', 'V_controls', 'NS_controls', 'ØV_controls',
+        'N_aces', 'S_aces', 'Ø_aces', 'V_aces', 'NS_aces', 'ØV_aces',
+        'N_kings', 'S_kings', 'Ø_kings', 'V_kings', 'NS_kings', 'ØV_kings',
+        'Declarer_Side', 'Declarer_HCP', 'Defense_HCP', 'HCP_diff',
+        'Declarer_LTC_adj', 'Defense_LTC_adj', 'LTC_diff',
+        'Suit_Index', 'NT_Index',
+    ]
+
+    reference_cols = [
         'contract_norm',
         'double_state',
         'field_mode_contract',
@@ -38,45 +63,35 @@ def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
         'top2_contract_2',
         'top2_count_1',
         'top2_count_2',
-        'expected_pct',
-        'pct_NS',
         'reference_scope',
         'N_section_played',
-        'Board_Type',
-        'competitive_flag',
     ]
-    
-    # Filtrer til kolonner som eksisterer
-    cols_available = [col for col in cols_to_keep if col in df.columns]
-    
+
+    # Filtrer til kolonner som eksisterer (computed cols tilføjes efter copy)
+    source_cols = hand_cols + reference_cols + [
+        c for c in performance_cols if c not in ('pct_vs_expected', 'pct_vs_expected_abs')
+    ]
+    cols_available = [col for col in source_cols if col in df.columns]
+
     report = df[cols_available].copy()
-    
+
     # Beregn forskel fra expected_pct
     report['pct_vs_expected'] = report['pct_NS'] - report['expected_pct']
     report['pct_vs_expected_abs'] = abs(report['pct_vs_expected'])
-    
+
     # Sorter efter absolutt forskel (største først)
     report = report.sort_values('pct_vs_expected_abs', ascending=False, na_position='last')
-    
-    # Omarranger kolonner så performance-data er først
-    performance_cols = [
-        'tournament_date',
-        'board_no',
-        'row',  # ✅ NY: row letter
-        'contract',
-        'expected_pct',
-        'pct_NS',
-        'pct_vs_expected',
-        'pct_vs_expected_abs',
-        'Board_Type',
-        'competitive_flag',
-    ]
-    
-    other_cols = [col for col in cols_available if col not in performance_cols]
-    
-    report = report[performance_cols + other_cols]
-    
-    print(f"✓ Board Review (All Hands): {len(report)} rækker")
+
+    # Omarranger kolonner: performance → hånd-data → reference
+    ordered_cols = (
+        [c for c in performance_cols if c in report.columns] +
+        [c for c in hand_cols if c in report.columns] +
+        [c for c in reference_cols if c in report.columns]
+    )
+
+    report = report[ordered_cols]
+
+    print(f"✓ Board Review (All Hands): {len(report)} rækker, {len(report.columns)} kolonner")
     
     return report
 
@@ -108,11 +123,21 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
     
     if df.empty:
         return df
-    
-    # Grupper per board
-    grouped = df.groupby(['tournament_date', 'board_no']).agg({
-        'row': 'first',  # ✅ NY: row letter (samme for alle på boardet)
-        'contract': 'first',  # Kontrakten (samme for alle på boardet)
+
+    # Hånd-metrics der aggregeres som gennemsnit
+    hand_mean_cols = [
+        'NS_HCP', 'ØV_HCP',
+        'NS_LTC_adj', 'ØV_LTC_adj',
+        'NS_controls', 'ØV_controls',
+        'Declarer_HCP', 'Defense_HCP', 'HCP_diff',
+        'Declarer_LTC_adj', 'Defense_LTC_adj', 'LTC_diff',
+        'Suit_Index', 'NT_Index',
+    ]
+
+    # Byg aggregerings-dict (tilføj kun kolonner som eksisterer)
+    agg_dict = {
+        'row': 'first',
+        'contract': 'first',
         'contract_norm': 'first',
         'field_mode_contract': 'first',
         'field_mode_count': 'first',
@@ -120,12 +145,20 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
         'top2_contract_1': 'first',
         'top2_contract_2': 'first',
         'expected_pct': 'first',
-        'pct_NS': 'mean',  # Gennemsnit af alle hænder
+        'pct_NS': 'mean',
         'reference_scope': 'first',
         'N_section_played': 'first',
         'Board_Type': 'first',
         'competitive_flag': 'first',
-    }).reset_index()
+    }
+    for col in hand_mean_cols:
+        if col in df.columns:
+            agg_dict[col] = 'mean'
+
+    # Grupper per board
+    grouped = df.groupby(['tournament_date', 'board_no']).agg(
+        {k: v for k, v in agg_dict.items() if k in df.columns}
+    ).reset_index()
     
     # Rename for klarhed
     grouped = grouped.rename(columns={
@@ -157,11 +190,11 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
         na_position='last'
     ).drop('sort_priority', axis=1)
     
-    # Omarranger kolonner
+    # Omarranger kolonner: performance → hånd-data → reference
     performance_cols = [
         'tournament_date',
         'board_no',
-        'row',  # ✅ NY: row letter
+        'row',
         'num_hands',
         'contract_actual',
         'expected_pct',
@@ -171,12 +204,16 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
         'Board_Type',
         'competitive_flag',
     ]
-    
-    other_cols = [col for col in grouped.columns if col not in performance_cols]
-    
-    grouped = grouped[performance_cols + other_cols]
-    
-    print(f"✓ Board Review (Summary): {len(grouped)} boards")
+
+    ordered_cols = (
+        [c for c in performance_cols if c in grouped.columns] +
+        [c for c in hand_mean_cols if c in grouped.columns] +
+        [c for c in grouped.columns if c not in performance_cols and c not in hand_mean_cols]
+    )
+
+    grouped = grouped[ordered_cols]
+
+    print(f"✓ Board Review (Summary): {len(grouped)} boards, {len(grouped.columns)} kolonner")
     print(f"  Split boards: {(grouped['Board_Type'] == 'Split').sum()}")
     print(f"  Dominant boards: {(grouped['Board_Type'] == 'Dominant').sum()}")
     print(f"  Wild boards: {(grouped['Board_Type'] == 'Wild').sum()}")
