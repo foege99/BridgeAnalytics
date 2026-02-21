@@ -204,7 +204,8 @@ def scrape_spilresultater(
         board = int(board_txt)
 
         if include_hands and board not in hands_by_board:
-            hands_by_board[board] = parse_hands_from_game_div(game, debug=(debug_hands and game_idx == 0))
+            #hands_by_board[board] = parse_hands_from_game_div(game, debug=(debug_hands and game_idx == 0))
+            hands_by_board[board] = parse_hands_from_game_div(game)
             if debug_hands and hands_by_board[board]:
                 _debug_print_handcheck(board, hands_by_board[board])
 

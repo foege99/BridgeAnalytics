@@ -22,7 +22,22 @@ def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
     
     if df.empty:
         return df
-    
+        
+    # === Define performance_cols FIRST ===
+    performance_cols = [
+        'tournament_date',
+        'board_no',
+        'row',
+        'contract',
+        'expected_pct',
+        'pct_NS',
+        'pct_vs_expected',
+        'pct_vs_expected_abs',
+        'Board_Type',
+        'competitive_flag',
+    ]
+
+
     # Vælg relevante kolonner
     cols_to_keep = [
         'tournament_date',
@@ -217,24 +232,32 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
     
     # Grupper per board
     grouped = df.groupby(['tournament_date', 'board_no']).agg({
-        'row': 'first',  # ✅ NY: row letter (samme for alle på boardet)
-        'contract': 'first',  # Kontrakten (samme for alle på boardet)
-        'contract_norm': 'first',
-        'decl': 'first',
-        'level': 'first',
-        'strain': 'first',
-        'field_mode_contract': 'first',
-        'field_mode_count': 'first',
-        'field_mode_freq': 'first',
-        'top2_contract_1': 'first',
-        'top2_contract_2': 'first',
-        'expected_pct': 'first',
-        'pct_NS': 'mean',
-        'reference_scope': 'first',
-        'N_section_played': 'first',
-        'Board_Type': 'first',
-        'competitive_flag': 'first',
-    }).reset_index()
+    'row': 'first',
+    'contract': 'first',
+    'contract_norm': 'first',
+    'decl': 'first',
+    'level': 'first',
+    'strain': 'first',
+    'field_mode_contract': 'first',
+    'field_mode_count': 'first',
+    'field_mode_freq': 'first',
+    'top2_contract_1': 'first',
+    'top2_contract_2': 'first',
+    'expected_pct': 'first',
+    'pct_NS': 'mean',
+    'reference_scope': 'first',
+    'N_section_played': 'first',
+    'Board_Type': 'first',
+    'competitive_flag': 'first',
+    # ✅ LEGG TIL DISSE:
+    'NS_HCP': 'mean',
+    'ØV_HCP': 'mean',
+    'NS_LTC_adj': 'mean',
+    'ØV_LTC_adj': 'mean',
+    'NS_controls': 'mean',
+    'ØV_controls': 'mean',
+}).reset_index()
+
     
     # Rename for klarhed
     grouped = grouped.rename(columns={
