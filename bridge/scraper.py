@@ -115,46 +115,48 @@ def hand_from_4_suits(sp: str, he: str, di: str, cl: str) -> str:
     cl = normalize_ranks(cl)
     return f"{sp}.{he}.{di}.{cl}" if any([sp, he, di, cl]) else None
 
-def parse_hands_from_game_div(game_div, debug=False) -> dict:
+def parse_hands_from_game_div(game_div) -> dict:
     """
-    ✅ Parse N/S/Ø/V hands fra game_div
-    
-    Søger efter kort-tekst i sidebar-format (ET9752)
-    Struktur:
-    ♠ 64
-    ♥ ET9752
-    ♦ K3
-    ♣ K72
+    Parse N/S/Ø/V hands from a game div.
+
+    Scans for elements containing suit symbols (♠♥♦♣) with card text
+    in Danish notation (E=Ace, K=King, D=Queen, B=Jack, T=Ten).
+    Maps up to 4 found hand blocks to N, V, Ø, S positions in order.
     """
+    SUIT_LINE_PAT = re.compile(r'([♠♥♦♣])\s*([EKDBT98765432\-—]*)', re.UNICODE)
+
+    # Find smallest elements each containing exactly one complete hand (all 4 suits)
+    hand_blocks = []
+    seen_elem_ids = set()
+
+    for elem in game_div.find_all(True):
+        eid = id(elem)
+        if eid in seen_elem_ids:
+            continue
+        text = elem.get_text(" ", strip=True)
+        matches = SUIT_LINE_PAT.findall(text)
+        suit_syms = [m[0] for m in matches]
+        # Exactly 4 entries covering all 4 distinct suits → one complete hand
+        if len(matches) == 4 and set(suit_syms) == {'♠', '♥', '♦', '♣'}:
+            hand_blocks.append(matches)
+            # Mark descendants as seen to avoid double-counting via parent elements
+            for child in elem.find_all(True):
+                seen_elem_ids.add(id(child))
+
+    # Map to positions N, V, Ø, S in the order found
+    positions = ["N", "V", "Ø", "S"]
     hands = {}
-    game_text = game_div.get_text()
-    
-    if debug:
-        print(f"      DEBUG game_text:\n{game_text[:500]}\n")
-    
-    # ✅ Split på position markers (Nord, Syd, Øst, Vest)
-    # Første hånd er Nord, dernæst Vest/Øst, dernæst Syd
-    positions = ['N', 'V', 'Ø', 'S']  # Rækkefølge på siden
-    
-    # ✅ Find alle 4-suit blokke (♠ X ♥ X ♦ X ♣ X)
-    # Mønster: 4 linjer med suit symbols + kort
-    suit_pattern = r'[♠S]\s*([EKDBT98765432]*)\s*[♥H]\s*([EKDBT98765432]*)\s*[♦D]\s*([EKDBT98765432]*)\s*[♣C]\s*([EKDBT98765432]*)'
-    
-    hand_blocks = re.findall(suit_pattern, game_text)
-    
-    if debug:
-        print(f"      Found {len(hand_blocks)} hand blocks")
-        for i, block in enumerate(hand_blocks):
-            print(f"        Hand {i}: {block}")
-    
-    # Map til positioner (Nord, Vest, Øst, Syd)
-    for idx, (sp, he, di, cl) in enumerate(hand_blocks):
-        if idx < len(positions):
-            pos = positions[idx]
-            hands[f"{pos}_hand"] = hand_from_4_suits(sp, he, di, cl)
-            if debug:
-                print(f"      ✓ {pos}: {hands[f'{pos}_hand']}")
-    
+    for i, block in enumerate(hand_blocks[:4]):
+        pos = positions[i]
+        suit_cards = dict(block)
+        sp = suit_cards.get("♠", "")
+        he = suit_cards.get("♥", "")
+        di = suit_cards.get("♦", "")
+        cl = suit_cards.get("♣", "")
+        result = hand_from_4_suits(sp, he, di, cl)
+        if result:
+            hands[f"{pos}_hand"] = result
+
     return hands
 
 def _debug_print_handcheck(board: int, hands: dict):
