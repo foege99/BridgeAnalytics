@@ -115,19 +115,46 @@ def hand_from_4_suits(sp: str, he: str, di: str, cl: str) -> str:
     cl = normalize_ranks(cl)
     return f"{sp}.{he}.{di}.{cl}" if any([sp, he, di, cl]) else None
 
-def parse_hands_from_game_div(game_div) -> dict:
-    """Parse N/S/Ø/V hands from a game div"""
+def parse_hands_from_game_div(game_div, debug=False) -> dict:
+    """
+    ✅ Parse N/S/Ø/V hands fra game_div
+    
+    Søger efter kort-tekst i sidebar-format (ET9752)
+    Struktur:
+    ♠ 64
+    ♥ ET9752
+    ♦ K3
+    ♣ K72
+    """
     hands = {}
-    for pos in ["N", "S", "Ø", "V"]:
-        div = game_div.select_one(f"div.hand.{pos}")
-        if div:
-            suits = div.select("div.suit")
-            if len(suits) == 4:
-                sp = clean(suits[0].get_text(" ", strip=True))
-                he = clean(suits[1].get_text(" ", strip=True))
-                di = clean(suits[2].get_text(" ", strip=True))
-                cl = clean(suits[3].get_text(" ", strip=True))
-                hands[f"{pos}_hand"] = hand_from_4_suits(sp, he, di, cl)
+    game_text = game_div.get_text()
+    
+    if debug:
+        print(f"      DEBUG game_text:\n{game_text[:500]}\n")
+    
+    # ✅ Split på position markers (Nord, Syd, Øst, Vest)
+    # Første hånd er Nord, dernæst Vest/Øst, dernæst Syd
+    positions = ['N', 'V', 'Ø', 'S']  # Rækkefølge på siden
+    
+    # ✅ Find alle 4-suit blokke (♠ X ♥ X ♦ X ♣ X)
+    # Mønster: 4 linjer med suit symbols + kort
+    suit_pattern = r'[♠S]\s*([EKDBT98765432]*)\s*[♥H]\s*([EKDBT98765432]*)\s*[♦D]\s*([EKDBT98765432]*)\s*[♣C]\s*([EKDBT98765432]*)'
+    
+    hand_blocks = re.findall(suit_pattern, game_text)
+    
+    if debug:
+        print(f"      Found {len(hand_blocks)} hand blocks")
+        for i, block in enumerate(hand_blocks):
+            print(f"        Hand {i}: {block}")
+    
+    # Map til positioner (Nord, Vest, Øst, Syd)
+    for idx, (sp, he, di, cl) in enumerate(hand_blocks):
+        if idx < len(positions):
+            pos = positions[idx]
+            hands[f"{pos}_hand"] = hand_from_4_suits(sp, he, di, cl)
+            if debug:
+                print(f"      ✓ {pos}: {hands[f'{pos}_hand']}")
+    
     return hands
 
 def _debug_print_handcheck(board: int, hands: dict):
@@ -147,6 +174,11 @@ def scrape_spilresultater(
     Scrape spilresultater from URL.
     
     Adds 'row' column based on page content (A/B/C).
+    
+    Parameters:
+    -----------
+    debug_hands: bool
+        If True, print HTML debugging info for first game
     """
     soup = get_soup(spil_url)
     rows = []
@@ -156,7 +188,10 @@ def scrape_spilresultater(
     row_letter = extract_row_from_page(soup)
     print(f"    → Detekteret row: {row_letter}")
 
-    for game in soup.select("div.game"):
+    games = soup.select("div.game")
+    print(f"    → Fundet {len(games)} games")
+    
+    for game_idx, game in enumerate(games):
         board_div = game.select_one("div.boardNo")
         if not board_div:
             continue
@@ -167,7 +202,7 @@ def scrape_spilresultater(
         board = int(board_txt)
 
         if include_hands and board not in hands_by_board:
-            hands_by_board[board] = parse_hands_from_game_div(game)
+            hands_by_board[board] = parse_hands_from_game_div(game, debug=(debug_hands and game_idx == 0))
             if debug_hands and hands_by_board[board]:
                 _debug_print_handcheck(board, hands_by_board[board])
 
@@ -207,7 +242,7 @@ def scrape_spilresultater(
             rows.append({
                 "tournament_date": tournament_date.date() if tournament_date else None,
                 "board": board,
-                "row": row_letter,  # ✅ NY: row letter (A/B/C) fra side-indhold
+                "row": row_letter,
 
                 "ns1": ns_parts[0],
                 "ns2": ns_parts[1],
@@ -235,6 +270,6 @@ def scrape_spilresultater(
             })
 
     if debug_hands and include_hands and not any(hands_by_board.values()):
-        print(f"  (ingen hænder parsed)")
+        print(f"  ⚠️ ADVARSEL: ingen hænder parsed! Check HTML struktur ovenfor")
 
     return rows

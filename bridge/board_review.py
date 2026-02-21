@@ -6,31 +6,111 @@ def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
     """
     Board Review rapport: ÉN RÆKKE PER HÅND
     
-    Viser hver enkelt hånd med Phase 2.1 reference-data.
-    Sorteret efter absolutt forskel fra expected_pct (størst først).
+    Viser hver enkelt hånd med Phase 2.1 reference-data OG hånd-features.
+    Sorteret efter tournament_date → board_no → row → performance-forskel.
     
     Parameters:
     -----------
     df : pd.DataFrame
-        DataFrame med Phase 2.1 kolonner
+        DataFrame med Phase 2.1 kolonner og hånd-features
     
     Returns:
     --------
     pd.DataFrame
-        Board review med alle hænder, sorteret efter performance-forskel
+        Board review med alle hænder, sorteret efter dato, board og row
     """
     
     if df.empty:
         return df
     
-    # Vælg relevante kolonner
+    # ✅ ALLE relevante kolonner (inkl. hånd-features)
     cols_to_keep = [
         'tournament_date',
         'board_no',
-        'row',  # ✅ NY: row letter (A/B/C)
+        'row',
         'contract',
         'contract_norm',
         'double_state',
+        'decl',
+        'level',
+        'strain',
+        'lead',
+        'tricks',
+        
+        # ✅ RÅDATA HÆNDER
+        'N_hand',
+        'S_hand',
+        'Ø_hand',
+        'V_hand',
+        
+        # ✅ HCP (Høje kort point)
+        'N_HCP',
+        'S_HCP',
+        'Ø_HCP',
+        'V_HCP',
+        'NS_HCP',
+        'ØV_HCP',
+        
+        # ✅ KORTFORDELING (shape)
+        'N_shape',
+        'S_shape',
+        'Ø_shape',
+        'V_shape',
+        'N_shape_SHDC',
+        'S_shape_SHDC',
+        'Ø_shape_SHDC',
+        'V_shape_SHDC',
+        
+        # ✅ BALANCED
+        'N_balanced',
+        'S_balanced',
+        'Ø_balanced',
+        'V_balanced',
+        
+        # ✅ DISTRIBUTION POINTS
+        'N_dist_pts_shortage',
+        'S_dist_pts_shortage',
+        'Ø_dist_pts_shortage',
+        'V_dist_pts_shortage',
+        
+        # ✅ LTC (Losing Trick Count)
+        'N_LTC_adj',
+        'S_LTC_adj',
+        'Ø_LTC_adj',
+        'V_LTC_adj',
+        'NS_LTC_adj',
+        'ØV_LTC_adj',
+        
+        # ✅ CONTROLS (Aces + Kings)
+        'N_controls',
+        'S_controls',
+        'Ø_controls',
+        'V_controls',
+        'NS_controls',
+        'ØV_controls',
+        
+        # ✅ ACES & KINGS
+        'N_aces',
+        'S_aces',
+        'Ø_aces',
+        'V_aces',
+        'N_kings',
+        'S_kings',
+        'Ø_kings',
+        'V_kings',
+        
+        # ✅ CONTRACT-SIDE METRICS
+        'Declarer_Side',
+        'Declarer_HCP',
+        'Defense_HCP',
+        'HCP_diff',
+        'Declarer_LTC_adj',
+        'Defense_LTC_adj',
+        'LTC_diff',
+        'Suit_Index',
+        'NT_Index',
+        
+        # ✅ PHASE 2.1 REFERENCE-DATA
         'field_mode_contract',
         'field_mode_count',
         'field_mode_freq',
@@ -55,15 +135,22 @@ def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
     report['pct_vs_expected'] = report['pct_NS'] - report['expected_pct']
     report['pct_vs_expected_abs'] = abs(report['pct_vs_expected'])
     
-    # Sorter efter absolutt forskel (største først)
-    report = report.sort_values('pct_vs_expected_abs', ascending=False, na_position='last')
+    # ✅ SORTER: tournament_date → board_no → row → forskel
+    report = report.sort_values(
+        ['tournament_date', 'board_no', 'row', 'pct_vs_expected_abs'],
+        ascending=[True, True, True, False],
+        na_position='last'
+    )
     
     # Omarranger kolonner så performance-data er først
     performance_cols = [
         'tournament_date',
         'board_no',
-        'row',  # ✅ NY: row letter
+        'row',
         'contract',
+        'decl',
+        'level',
+        'strain',
         'expected_pct',
         'pct_NS',
         'pct_vs_expected',
@@ -72,11 +159,25 @@ def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
         'competitive_flag',
     ]
     
-    other_cols = [col for col in cols_available if col not in performance_cols]
+    hand_cols = [
+        'N_hand', 'S_hand', 'Ø_hand', 'V_hand',
+        'N_HCP', 'S_HCP', 'Ø_HCP', 'V_HCP', 'NS_HCP', 'ØV_HCP',
+        'N_shape', 'S_shape', 'Ø_shape', 'V_shape',
+        'N_shape_SHDC', 'S_shape_SHDC', 'Ø_shape_SHDC', 'V_shape_SHDC',
+        'N_balanced', 'S_balanced', 'Ø_balanced', 'V_balanced',
+        'N_dist_pts_shortage', 'S_dist_pts_shortage', 'Ø_dist_pts_shortage', 'V_dist_pts_shortage',
+        'N_LTC_adj', 'S_LTC_adj', 'Ø_LTC_adj', 'V_LTC_adj', 'NS_LTC_adj', 'ØV_LTC_adj',
+        'N_controls', 'S_controls', 'Ø_controls', 'V_controls', 'NS_controls', 'ØV_controls',
+        'N_aces', 'S_aces', 'Ø_aces', 'V_aces',
+        'N_kings', 'S_kings', 'Ø_kings', 'V_kings',
+    ]
+    hand_cols = [col for col in hand_cols if col in cols_available]
     
-    report = report[performance_cols + other_cols]
+    other_cols = [col for col in cols_available if col not in performance_cols and col not in hand_cols]
     
-    print(f"✓ Board Review (All Hands): {len(report)} rækker")
+    report = report[performance_cols + hand_cols + other_cols]
+    
+    print(f"✓ Board Review (All Hands): {len(report)} rækker, {len(report.columns)} kolonner")
     
     return report
 
@@ -92,13 +193,15 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
     - Gennemsnit forskel
     - Board klassifikation
     - Row (A/B/C)
+    - Gennemsnit HCP per side
+    - Gennemsnit LTC per side
     
     Sorteret efter Board_Type (Split først), så efter forskel.
     
     Parameters:
     -----------
     df : pd.DataFrame
-        DataFrame med Phase 2.1 kolonner
+        DataFrame med Phase 2.1 kolonner og hånd-features
     
     Returns:
     --------
@@ -111,26 +214,43 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
     
     # Grupper per board
     grouped = df.groupby(['tournament_date', 'board_no']).agg({
-        'row': 'first',  # ✅ NY: row letter (samme for alle på boardet)
-        'contract': 'first',  # Kontrakten (samme for alle på boardet)
+        'row': 'first',
+        'contract': 'first',
         'contract_norm': 'first',
+        'decl': 'first',
+        'level': 'first',
+        'strain': 'first',
         'field_mode_contract': 'first',
         'field_mode_count': 'first',
         'field_mode_freq': 'first',
         'top2_contract_1': 'first',
         'top2_contract_2': 'first',
         'expected_pct': 'first',
-        'pct_NS': 'mean',  # Gennemsnit af alle hænder
+        'pct_NS': 'mean',
         'reference_scope': 'first',
         'N_section_played': 'first',
         'Board_Type': 'first',
         'competitive_flag': 'first',
+        
+        # ✅ HÅND-FEATURES (gennemsnit)
+        'NS_HCP': 'mean',
+        'ØV_HCP': 'mean',
+        'NS_LTC_adj': 'mean',
+        'ØV_LTC_adj': 'mean',
+        'NS_controls': 'mean',
+        'ØV_controls': 'mean',
     }).reset_index()
     
     # Rename for klarhed
     grouped = grouped.rename(columns={
         'pct_NS': 'avg_pct_NS',
         'contract': 'contract_actual',
+        'NS_HCP': 'avg_NS_HCP',
+        'ØV_HCP': 'avg_ØV_HCP',
+        'NS_LTC_adj': 'avg_NS_LTC_adj',
+        'ØV_LTC_adj': 'avg_ØV_LTC_adj',
+        'NS_controls': 'avg_NS_controls',
+        'ØV_controls': 'avg_ØV_controls',
     })
     
     # Antal hænder per board
@@ -142,7 +262,6 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
     grouped['avg_pct_vs_expected_abs'] = abs(grouped['avg_pct_vs_expected'])
     
     # Sortering: Split først, så efter forskel
-    # Opret sort-prioritet
     sort_priority = {
         'Split': 0,
         'Dominant': 1,
@@ -161,22 +280,31 @@ def make_board_review_summary(df: pd.DataFrame) -> pd.DataFrame:
     performance_cols = [
         'tournament_date',
         'board_no',
-        'row',  # ✅ NY: row letter
+        'row',
         'num_hands',
         'contract_actual',
+        'decl',
+        'level',
+        'strain',
         'expected_pct',
         'avg_pct_NS',
         'avg_pct_vs_expected',
         'avg_pct_vs_expected_abs',
         'Board_Type',
         'competitive_flag',
+        'avg_NS_HCP',
+        'avg_ØV_HCP',
+        'avg_NS_LTC_adj',
+        'avg_ØV_LTC_adj',
+        'avg_NS_controls',
+        'avg_ØV_controls',
     ]
     
     other_cols = [col for col in grouped.columns if col not in performance_cols]
     
     grouped = grouped[performance_cols + other_cols]
     
-    print(f"✓ Board Review (Summary): {len(grouped)} boards")
+    print(f"✓ Board Review (Summary): {len(grouped)} boards, {len(grouped.columns)} kolonner")
     print(f"  Split boards: {(grouped['Board_Type'] == 'Split').sum()}")
     print(f"  Dominant boards: {(grouped['Board_Type'] == 'Dominant').sum()}")
     print(f"  Wild boards: {(grouped['Board_Type'] == 'Wild').sum()}")
@@ -199,7 +327,7 @@ def board_review_statistics(df_all_hands: pd.DataFrame, df_summary: pd.DataFrame
     Returns:
     --------
     dict
-        Statistik som kan bruges tilprint eller rapport
+        Statistik som kan bruges til print eller rapport
     """
     
     stats = {
