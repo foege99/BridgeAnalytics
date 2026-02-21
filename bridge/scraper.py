@@ -176,6 +176,11 @@ def scrape_spilresultater(
     Scrape spilresultater from URL.
     
     Adds 'row' column based on page content (A/B/C).
+    
+    Parameters:
+    -----------
+    debug_hands: bool
+        If True, print HTML debugging info for first game
     """
     soup = get_soup(spil_url)
     rows = []
@@ -185,7 +190,10 @@ def scrape_spilresultater(
     row_letter = extract_row_from_page(soup)
     print(f"    → Detekteret row: {row_letter}")
 
-    for game in soup.select("div.game"):
+    games = soup.select("div.game")
+    print(f"    → Fundet {len(games)} games")
+    
+    for game_idx, game in enumerate(games):
         board_div = game.select_one("div.boardNo")
         if not board_div:
             continue
@@ -196,7 +204,7 @@ def scrape_spilresultater(
         board = int(board_txt)
 
         if include_hands and board not in hands_by_board:
-            hands_by_board[board] = parse_hands_from_game_div(game)
+            hands_by_board[board] = parse_hands_from_game_div(game, debug=(debug_hands and game_idx == 0))
             if debug_hands and hands_by_board[board]:
                 _debug_print_handcheck(board, hands_by_board[board])
 
@@ -236,7 +244,7 @@ def scrape_spilresultater(
             rows.append({
                 "tournament_date": tournament_date.date() if tournament_date else None,
                 "board": board,
-                "row": row_letter,  # ✅ NY: row letter (A/B/C) fra side-indhold
+                "row": row_letter,
 
                 "ns1": ns_parts[0],
                 "ns2": ns_parts[1],
@@ -264,6 +272,6 @@ def scrape_spilresultater(
             })
 
     if debug_hands and include_hands and not any(hands_by_board.values()):
-        print(f"  (ingen hænder parsed)")
+        print(f"  ⚠️ ADVARSEL: ingen hænder parsed! Check HTML struktur ovenfor")
 
     return rows
