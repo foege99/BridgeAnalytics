@@ -46,6 +46,14 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     except ImportError:
         Font = None  # graceful degradation – no bold formatting
 
+    try:
+        from openpyxl.cell.rich_text import CellRichText, TextBlock
+        from openpyxl.cell.text import InlineFont
+        _RED_FONT = InlineFont(color='FF0000')
+        _rich_text_available = True
+    except ImportError:
+        _rich_text_available = False
+
     wb = writer.book
     ws = wb.create_sheet("Board1_LastTournament")
 
@@ -56,6 +64,13 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
         if Font is not None:
             cell.font = Font(bold=True)
         return cell
+
+    def _write_suit_line(cell, line: str) -> None:
+        """Write a suit line; colour ♥ and ♦ symbols red when rich text is available."""
+        if _rich_text_available and line and line[0] in ('♥', '♦'):
+            cell.value = CellRichText([TextBlock(_RED_FONT, line[0]), line[1:]])
+        else:
+            cell.value = line
 
     # ------------------------------------------------------------------
     # 1. Validate input
@@ -122,9 +137,55 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
         'V': per_row.get('V_hand'),
     }
 
+    # HCP lookup per direction
+    _hcp_col_map = {'N': 'N_HCP', 'S': 'S_HCP', 'Ø': 'Ø_HCP', 'V': 'V_HCP'}
+
+    def _get_hcp(dir_code: str):
+        """Return HCP for *dir_code* as int, or '?' if unavailable.
+
+        Looks up the per-direction HCP column (e.g. 'N_HCP') first;
+        falls back to computing from the dot-format hand string.
+        """
+        col = _hcp_col_map.get(dir_code, '')
+        if col and col in per_row.index:
+            val = per_row.get(col)
+            if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                return int(val)
+        # Fallback: compute from hand string
+        hand = dir_to_hand.get(dir_code)
+        if hand is not None and not (isinstance(hand, float) and pd.isna(hand)):
+            try:
+                from bridge.hand_eval import parse_hand, hcp as _calc_hcp
+                return _calc_hcp(parse_hand(str(hand)))
+            except Exception:
+                pass
+        return '?'
+
     def _player_label(dir_code: str) -> str:
         name = dir_to_player.get(dir_code, '')
-        return f"{dir_code}: {name}"
+        return f"{dir_code}: {name}  {_get_hcp(dir_code)} HCP"
+
+    # Graceful field lookup (tries multiple candidate column names)
+    def _get_field(row, *candidates):
+        """Return the first non-null value found in *row* for any of *candidates*.
+
+        Parameters
+        ----------
+        row : pandas Series
+            The data row to inspect.
+        *candidates : str
+            Column names to try in order.
+
+        Returns
+        -------
+        The first non-null field value, or None if all candidates are missing/null.
+        """
+        for c in candidates:
+            if c in row.index:
+                val = row.get(c)
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    return val
+        return None
 
     top_dir = rot['top']
     left_dir = rot['left']
@@ -134,45 +195,89 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     # ------------------------------------------------------------------
     # 5. Write to sheet
     #
-    # Layout (columns A=1, B=2, C=3):
-    #   Row 1 : title
-    #   Row 2 : top player name   (col B)
-    #   Rows 3-6 : top hand suits (col B)
-    #   Row 8 : left name (A)  |  right name (C)
+    # Layout (columns A=1, B=2, C=3, E=5):
+    #   Row 1 : title (B)  |  Turnering (E)
+    #   Row 2 : top player name (B)  |  Board (E)
+    #   Rows 3-6 : top hand suits (B)
+    #   Row 3, E : Dealer
+    #   Row 4, E : Zone
+    #   Row 8 : left name (A)  |  right name (C)  |  Kontrakt (E)
     #   Rows 9-12 : left suits (A)  |  right suits (C)
+    #   Row 9, E : Declarer
+    #   Row 10, E : Udspil
+    #   Row 11, E : Resultat
+    #   Row 12, E : NS HCP
+    #   Row 13, E : ØV HCP
     #   Row 14 : bottom player name (col B)
     #   Rows 15-18 : bottom hand suits (col B)
-    #   Row 20 : metadata
     # ------------------------------------------------------------------
     section_val = per_row.get('section', '')
     ws.cell(row=1, column=2,
             value=f"Spil 1 – {latest_date} (sektion {section_val})")
     _bold(ws.cell(row=1, column=2))
 
+    # --- Header block (col E) ---
+    dealer_val = _get_field(per_row, 'dealer', 'Dealer')
+    zone_val = _get_field(per_row, 'vul', 'vulnerability', 'zone', 'Zone')
+    ws.cell(row=1, column=5, value=f"Turnering: {latest_date}")
+    ws.cell(row=2, column=5, value="Board: 1")
+    ws.cell(row=3, column=5,
+            value=f"Dealer: {dealer_val if dealer_val is not None else '(ukendt)'}")
+    ws.cell(row=4, column=5,
+            value=f"Zone: {zone_val if zone_val is not None else '(ukendt)'}")
+
     # --- Top hand ---
     _bold(ws.cell(row=2, column=2, value=_player_label(top_dir)))
     for i, line in enumerate(_hand_suit_lines(dir_to_hand.get(top_dir))):
-        ws.cell(row=3 + i, column=2, value=line)
+        _write_suit_line(ws.cell(row=3 + i, column=2), line)
 
     # --- Left hand ---
     _bold(ws.cell(row=8, column=1, value=_player_label(left_dir)))
     for i, line in enumerate(_hand_suit_lines(dir_to_hand.get(left_dir))):
-        ws.cell(row=9 + i, column=1, value=line)
+        _write_suit_line(ws.cell(row=9 + i, column=1), line)
 
     # --- Right hand ---
     _bold(ws.cell(row=8, column=3, value=_player_label(right_dir)))
     for i, line in enumerate(_hand_suit_lines(dir_to_hand.get(right_dir))):
-        ws.cell(row=9 + i, column=3, value=line)
+        _write_suit_line(ws.cell(row=9 + i, column=3), line)
 
     # --- Bottom hand (Per) ---
     _bold(ws.cell(row=14, column=2, value=_player_label(bottom_dir)))
     for i, line in enumerate(_hand_suit_lines(dir_to_hand.get(bottom_dir))):
-        ws.cell(row=15 + i, column=2, value=line)
+        _write_suit_line(ws.cell(row=15 + i, column=2), line)
+
+    # --- Right-side info block (col E, rows 8-13) ---
+    contract_val = _get_field(per_row, 'contract')
+    decl_val = _get_field(per_row, 'decl')
+    lead_val = _get_field(per_row, 'lead')
+    tricks_val = _get_field(per_row, 'tricks')
+
+    def _side_hcp_total(col_name: str, dir1: str, dir2: str):
+        """Return combined HCP for a side from a column, or by summing per-direction HCP."""
+        val = _get_field(per_row, col_name)
+        if val is not None:
+            return val
+        h1, h2 = _get_hcp(dir1), _get_hcp(dir2)
+        if h1 != '?' and h2 != '?':
+            return int(h1) + int(h2)
+        return None
+
+    # NS/ØV HCP totals: prefer combined columns, else sum per-hand
+    ns_hcp = _side_hcp_total('NS_HCP', 'N', 'S')
+    ov_hcp = _side_hcp_total('ØV_HCP', 'Ø', 'V')
+
+    ws.cell(row=8,  column=5, value=f"Kontrakt: {contract_val if contract_val is not None else '(ukendt)'}")
+    ws.cell(row=9,  column=5, value=f"Declarer: {decl_val if decl_val is not None else '(ukendt)'}")
+    ws.cell(row=10, column=5, value=f"Udspil: {lead_val if lead_val is not None else '(ukendt)'}")
+    ws.cell(row=11, column=5, value=f"Resultat: {tricks_val if tricks_val is not None else '(ukendt)'}")
+    ws.cell(row=12, column=5, value=f"NS HCP: {ns_hcp if ns_hcp is not None else '(ukendt)'}")
+    ws.cell(row=13, column=5, value=f"ØV HCP: {ov_hcp if ov_hcp is not None else '(ukendt)'}")
 
     # --- Column widths ---
     ws.column_dimensions['A'].width = 22
     ws.column_dimensions['B'].width = 22
     ws.column_dimensions['C'].width = 22
+    ws.column_dimensions['E'].width = 25
 
 
 def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:

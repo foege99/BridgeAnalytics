@@ -179,10 +179,11 @@ def test_hand_written_as_four_suit_lines():
     ws = wb['Board1_LastTournament']
 
     lines = [ws.cell(row=15 + i, column=2).value for i in range(4)]
-    assert lines[0] == '♠ AKT7'
-    assert lines[1] == '♥ QJ3'
-    assert lines[2] == '♦ 984'
-    assert lines[3] == '♣ AK2'
+    assert str(lines[0]) == '♠ AKT7'
+    # ♥ and ♦ may be rich text (red symbol); str() normalises both cases
+    assert str(lines[1]) == '♥ QJ3'
+    assert str(lines[2]) == '♦ 984'
+    assert str(lines[3]) == '♣ AK2'
 
 
 def test_latest_date_used():
@@ -243,3 +244,128 @@ def test_missing_board_no_column_writes_message():
 
     msg = ws.cell(row=1, column=1).value
     assert msg is not None
+
+
+# ---------------------------------------------------------------------------
+# Tests for new features: HCP, header block, right-side info, red suits
+# ---------------------------------------------------------------------------
+
+def test_player_label_includes_hcp_computed():
+    """Player label must include HCP computed from hand (no HCP column supplied)."""
+    df = _make_df()  # Per = N, N_hand = 'AKT7.QJ3.984.AK2' → 17 HCP
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # Bottom cell (Per) row 14, col 2
+    label = ws.cell(row=14, column=2).value
+    assert '17 HCP' in label
+
+
+def test_player_label_includes_hcp_from_column():
+    """Player label uses per-hand HCP column when present."""
+    df = _make_df(N_HCP=21)  # override with explicit column value
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    label = ws.cell(row=14, column=2).value
+    assert '21 HCP' in label
+
+
+def test_header_block_written_col_e():
+    """Header block with Turnering/Board/Dealer/Zone written at column E."""
+    df = _make_df(dealer='N', vul='NS')
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert '2026-01-15' in str(ws.cell(row=1, column=5).value)
+    assert 'Board: 1' in str(ws.cell(row=2, column=5).value)
+    assert 'N' in str(ws.cell(row=3, column=5).value)   # Dealer
+    assert 'NS' in str(ws.cell(row=4, column=5).value)  # Zone
+
+
+def test_header_block_fallback_when_no_dealer_zone():
+    """Header block shows '(ukendt)' when dealer/zone columns absent."""
+    df = _make_df()  # no dealer or vul column
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert '(ukendt)' in str(ws.cell(row=3, column=5).value)
+    assert '(ukendt)' in str(ws.cell(row=4, column=5).value)
+
+
+def test_right_info_block_contract_fields():
+    """Right-side info block contains contract/decl/lead/tricks."""
+    df = _make_df(contract='4S', decl='N', lead='♥A', tricks=10)
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert '4S' in str(ws.cell(row=8, column=5).value)
+    assert 'N'  in str(ws.cell(row=9, column=5).value)
+    assert '♥A' in str(ws.cell(row=10, column=5).value)
+    assert '10'  in str(ws.cell(row=11, column=5).value)
+
+
+def test_right_info_block_hcp_totals_from_columns():
+    """NS/ØV HCP totals shown from combined columns when present."""
+    df = _make_df(NS_HCP=26, ØV_HCP=14)
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert '26' in str(ws.cell(row=12, column=5).value)
+    assert '14' in str(ws.cell(row=13, column=5).value)
+
+
+def test_right_info_block_hcp_totals_computed():
+    """NS/ØV HCP totals computed from per-hand HCP when combined columns absent."""
+    # N_hand=17 HCP, S_hand → compute from 'S_hand'
+    # N_hand='AKT7.QJ3.984.AK2' = 17 HCP, S_hand='652.A75.KQ72.J54' = 10 HCP → NS=27
+    df = _make_df()
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    ns_cell = str(ws.cell(row=12, column=5).value)
+    assert 'NS HCP' in ns_cell
+    assert '27' in ns_cell
+
+
+def test_red_suit_symbols_rich_text():
+    """♥ and ♦ suit lines use rich text; ♠ and ♣ remain plain strings."""
+    try:
+        from openpyxl.cell.rich_text import CellRichText
+    except ImportError:
+        pytest.skip("openpyxl rich text not available")
+
+    df = _make_df()  # Per = N, N_hand = 'AKT7.QJ3.984.AK2'
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # Rows 15-18 are the bottom (Per's) hand
+    spade_val   = ws.cell(row=15, column=2).value
+    heart_val   = ws.cell(row=16, column=2).value
+    diamond_val = ws.cell(row=17, column=2).value
+    club_val    = ws.cell(row=18, column=2).value
+
+    assert not isinstance(spade_val, CellRichText), "♠ should be plain string"
+    assert not isinstance(club_val,  CellRichText), "♣ should be plain string"
+    assert isinstance(heart_val,   CellRichText), "♥ should be CellRichText"
+    assert isinstance(diamond_val, CellRichText), "♦ should be CellRichText"
+
+
+def test_right_info_block_fallback_when_missing():
+    """Right-side info shows '(ukendt)' when contract fields absent."""
+    df = _make_df()  # no contract/decl/lead/tricks columns
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert '(ukendt)' in str(ws.cell(row=8, column=5).value)
+    assert '(ukendt)' in str(ws.cell(row=9, column=5).value)
+
