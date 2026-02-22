@@ -2,6 +2,179 @@ import pandas as pd
 import numpy as np
 
 
+# ---------------------------------------------------------------------------
+# Direction helpers shared by board-layout functions
+# ---------------------------------------------------------------------------
+
+# Maps player-column name to compass direction code
+_PLAYER_COL_TO_DIR = {'ns1': 'N', 'ns2': 'S', 'ew1': 'Ø', 'ew2': 'V'}
+
+# Rotation tables: Per's original direction → display positions
+# display positions: bottom (Per), top (partner), left (opponent), right (opponent)
+_ROTATIONS = {
+    'S': {'bottom': 'S', 'top': 'N', 'left': 'V', 'right': 'Ø'},
+    'N': {'bottom': 'N', 'top': 'S', 'left': 'Ø', 'right': 'V'},
+    'Ø': {'bottom': 'Ø', 'top': 'V', 'left': 'S', 'right': 'N'},
+    'V': {'bottom': 'V', 'top': 'Ø', 'left': 'N', 'right': 'S'},
+}
+
+
+def _hand_suit_lines(hand_str) -> list:
+    """Convert dot-format hand string (S.H.D.C) to 4 suit lines with symbols."""
+    if hand_str is None or (isinstance(hand_str, float) and pd.isna(hand_str)):
+        parts = ['-', '-', '-', '-']
+    else:
+        parts = str(hand_str).split('.')
+        while len(parts) < 4:
+            parts.append('-')
+    suits = ['♠', '♥', '♦', '♣']
+    return [f"{s} {p}" for s, p in zip(suits, parts)]
+
+
+def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
+    """
+    Write sheet 'Board1_LastTournament' to *writer* (an open pd.ExcelWriter).
+
+    Shows board 1 from the latest tournament date present in *df* in a classic
+    bridge table layout, rotated so that *per_name* is always at the bottom.
+
+    If the required data is not available the sheet is still created with a
+    descriptive message instead of raising an exception.
+    """
+    try:
+        from openpyxl.styles import Font
+    except ImportError:
+        Font = None  # graceful degradation – no bold formatting
+
+    wb = writer.book
+    ws = wb.create_sheet("Board1_LastTournament")
+
+    def _write_msg(msg: str) -> None:
+        ws.cell(row=1, column=1, value=msg)
+
+    def _bold(cell):
+        if Font is not None:
+            cell.font = Font(bold=True)
+        return cell
+
+    # ------------------------------------------------------------------
+    # 1. Validate input
+    # ------------------------------------------------------------------
+    if df is None or df.empty:
+        _write_msg("Ingen data tilgængelig.")
+        return
+
+    if 'board_no' not in df.columns:
+        _write_msg("Kolonnen 'board_no' mangler i datasættet.")
+        return
+
+    if 'tournament_date' not in df.columns:
+        _write_msg("Kolonnen 'tournament_date' mangler i datasættet.")
+        return
+
+    # ------------------------------------------------------------------
+    # 2. Latest tournament date → board 1
+    # ------------------------------------------------------------------
+    latest_date = df['tournament_date'].max()
+    df_latest = df[df['tournament_date'] == latest_date]
+    df_b1 = df_latest[df_latest['board_no'] == 1]
+
+    if df_b1.empty:
+        _write_msg(f"Spil 1 ikke fundet for seneste turnering ({latest_date}).")
+        return
+
+    # ------------------------------------------------------------------
+    # 3. Find the row where Per appears
+    # ------------------------------------------------------------------
+    per_row = None
+    per_dir = None
+
+    for _, row in df_b1.iterrows():
+        for col, dir_code in _PLAYER_COL_TO_DIR.items():
+            if row.get(col) == per_name:
+                per_row = row
+                per_dir = dir_code
+                break
+        if per_row is not None:
+            break
+
+    if per_row is None:
+        _write_msg(
+            f"{per_name} ikke fundet i Spil 1 for seneste turnering ({latest_date})."
+        )
+        return
+
+    # ------------------------------------------------------------------
+    # 4. Build display data
+    # ------------------------------------------------------------------
+    rot = _ROTATIONS[per_dir]
+
+    dir_to_player = {
+        'N': per_row.get('ns1', ''),
+        'S': per_row.get('ns2', ''),
+        'Ø': per_row.get('ew1', ''),
+        'V': per_row.get('ew2', ''),
+    }
+    dir_to_hand = {
+        'N': per_row.get('N_hand'),
+        'S': per_row.get('S_hand'),
+        'Ø': per_row.get('Ø_hand'),
+        'V': per_row.get('V_hand'),
+    }
+
+    def _player_label(dir_code: str) -> str:
+        name = dir_to_player.get(dir_code, '')
+        return f"{dir_code}: {name}"
+
+    top_dir = rot['top']
+    left_dir = rot['left']
+    right_dir = rot['right']
+    bottom_dir = rot['bottom']  # always Per
+
+    # ------------------------------------------------------------------
+    # 5. Write to sheet
+    #
+    # Layout (columns A=1, B=2, C=3):
+    #   Row 1 : title
+    #   Row 2 : top player name   (col B)
+    #   Rows 3-6 : top hand suits (col B)
+    #   Row 8 : left name (A)  |  right name (C)
+    #   Rows 9-12 : left suits (A)  |  right suits (C)
+    #   Row 14 : bottom player name (col B)
+    #   Rows 15-18 : bottom hand suits (col B)
+    #   Row 20 : metadata
+    # ------------------------------------------------------------------
+    section_val = per_row.get('section', '')
+    ws.cell(row=1, column=2,
+            value=f"Spil 1 – {latest_date} (sektion {section_val})")
+    _bold(ws.cell(row=1, column=2))
+
+    # --- Top hand ---
+    _bold(ws.cell(row=2, column=2, value=_player_label(top_dir)))
+    for i, line in enumerate(_hand_suit_lines(dir_to_hand.get(top_dir))):
+        ws.cell(row=3 + i, column=2, value=line)
+
+    # --- Left hand ---
+    _bold(ws.cell(row=8, column=1, value=_player_label(left_dir)))
+    for i, line in enumerate(_hand_suit_lines(dir_to_hand.get(left_dir))):
+        ws.cell(row=9 + i, column=1, value=line)
+
+    # --- Right hand ---
+    _bold(ws.cell(row=8, column=3, value=_player_label(right_dir)))
+    for i, line in enumerate(_hand_suit_lines(dir_to_hand.get(right_dir))):
+        ws.cell(row=9 + i, column=3, value=line)
+
+    # --- Bottom hand (Per) ---
+    _bold(ws.cell(row=14, column=2, value=_player_label(bottom_dir)))
+    for i, line in enumerate(_hand_suit_lines(dir_to_hand.get(bottom_dir))):
+        ws.cell(row=15 + i, column=2, value=line)
+
+    # --- Column widths ---
+    ws.column_dimensions['A'].width = 22
+    ws.column_dimensions['B'].width = 22
+    ws.column_dimensions['C'].width = 22
+
+
 def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
     """
     Board Review rapport: ÉN RÆKKE PER HÅND

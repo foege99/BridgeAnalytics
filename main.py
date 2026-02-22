@@ -29,6 +29,7 @@ from bridge.board_review import (
     make_board_review_summary,
     board_review_statistics,
     print_board_review_stats,
+    write_board1_layout_sheet,
 )
 
 # ✅ IMPORT DECLARER ANALYSIS
@@ -394,6 +395,9 @@ def main():
             df_field_defense.to_excel(writer, sheet_name='Field_Defense', index=False)
         if not df_field_declarer.empty:
             df_field_declarer.to_excel(writer, sheet_name='Field_Declarer', index=False)
+        
+        # Board 1 layout from latest tournament
+        write_board1_layout_sheet(writer, df_all, PER)
     
     print(f"✅ Analyse færdig! Output: {OUTPUT_FILE}")
     
