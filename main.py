@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+import json
+from pathlib import Path
 import pandas as pd
 
 from bridge.crawler import get_recent_tournaments
@@ -227,6 +229,62 @@ def main():
             df_field_declarer.to_excel(writer, sheet_name='Field_Declarer', index=False)
     
     print(f"✅ Analyse færdig! Output: {OUTPUT_FILE}")
+
+    # ✅ SKRIV JSON (samme data som Excel, men som JSON-fil)
+    json_file = str(Path(OUTPUT_FILE).with_suffix(".json"))
+    save_as_json(
+        {
+            "Board_Review_All": df_board_review_all,
+            "Board_Review_Summary": df_board_review_summary,
+            "Declarer_Analysis": df_declarer_analysis,
+            "Declarer_List": df_declarer,
+            "Role_Summary": df_summary,
+            "Tournament_Summary": df_tournament,
+            "Evening_Matrix": df_evening_matrix,
+            "Quarterly_Summary": df_quarterly,
+            "Field_Defense": df_field_defense,
+            "Field_Declarer": df_field_declarer,
+        },
+        json_file,
+    )
+
+
+def save_as_json(sheets: dict, json_path: str) -> None:
+    """
+    Gem alle analyse-DataFrames som én JSON-fil.
+
+    Strukturen er::
+
+        {
+          "Board_Review_All": [ {...}, {...}, ... ],
+          "Tournament_Summary": [ {...}, ... ],
+          ...
+        }
+
+    Dato-kolonner serialiseres som ISO-8601 strings.
+    NaN-værdier konverteres til null.
+
+    Parameters
+    ----------
+    sheets : dict
+        {ark_navn: pd.DataFrame}  – samme navne som Excel-arkene.
+    json_path : str
+        Sti til output-filen, f.eks. "Henrik_Per_ANALYSE_20260221_2023.json".
+    """
+    output: dict = {}
+    for sheet_name, df in sheets.items():
+        if df is None or df.empty:
+            continue
+        # Konverter til records-liste med ISO-datoer og Python-native typer
+        records = json.loads(
+            df.to_json(orient="records", date_format="iso", force_ascii=False)
+        )
+        output[sheet_name] = records
+
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
+
+    print(f"✅ JSON gemt: {json_path}")
 
 
 if __name__ == "__main__":

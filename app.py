@@ -1,12 +1,15 @@
 """
 BridgeAnalytics – Web Dashboard
 ================================
-Streamlit-baseret dashboard til visning af BridgeAnalytics Excel-rapporter.
+Streamlit-baseret dashboard til visning af BridgeAnalytics analyse-data.
+
+Understøtter både JSON-filer (genereret af main.py) og Excel-filer (.xlsx).
 
 Kør med:
     streamlit run app.py
 """
 
+import json
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -32,6 +35,13 @@ def find_local_xlsx() -> list[Path]:
     return files
 
 
+def find_local_json() -> list[Path]:
+    """Find alle *ANALYSE*.json-filer i projektmappen."""
+    root = Path(__file__).parent
+    files = sorted(root.glob("*ANALYSE*.json"), reverse=True)
+    return files
+
+
 def load_excel(file) -> dict[str, pd.DataFrame]:
     """
     Indlæs alle ark fra en Excel-fil.
@@ -45,6 +55,31 @@ def load_excel(file) -> dict[str, pd.DataFrame]:
             sheets[sheet] = df
         except Exception:
             pass
+    return sheets
+
+
+def load_json(file) -> dict[str, pd.DataFrame]:
+    """
+    Indlæs analyse-data fra en JSON-fil genereret af main.py.
+
+    Forventer strukturen::
+
+        { "Sheet_Name": [ {...record...}, ... ], ... }
+
+    Returnerer dict: {ark_navn: DataFrame}.
+    """
+    if hasattr(file, "read"):
+        data = json.load(file)
+    else:
+        with open(file, encoding="utf-8") as f:
+            data = json.load(f)
+
+    sheets = {}
+    for sheet_name, records in data.items():
+        if records:
+            sheets[sheet_name] = pd.DataFrame(records)
+        else:
+            sheets[sheet_name] = pd.DataFrame()
     return sheets
 
 
@@ -89,13 +124,24 @@ st.sidebar.markdown("---")
 
 source = st.sidebar.radio(
     "Datakilde",
-    ["Upload Excel-fil", "Brug lokal fil"],
+    ["Upload JSON-fil", "Upload Excel-fil", "Brug lokal fil"],
     index=0,
 )
 
 sheets: dict[str, pd.DataFrame] = {}
 
-if source == "Upload Excel-fil":
+if source == "Upload JSON-fil":
+    uploaded = st.sidebar.file_uploader(
+        "Vælg JSON-fil",
+        type=["json"],
+        help="Upload en JSON-fil genereret af BridgeAnalytics (main.py).",
+    )
+    if uploaded:
+        with st.spinner("Indlæser data…"):
+            sheets = load_json(uploaded)
+        st.sidebar.success(f"Indlæst: {uploaded.name}")
+
+elif source == "Upload Excel-fil":
     uploaded = st.sidebar.file_uploader(
         "Vælg Excel-fil (.xlsx)",
         type=["xlsx"],
@@ -105,15 +151,23 @@ if source == "Upload Excel-fil":
         with st.spinner("Indlæser data…"):
             sheets = load_excel(uploaded)
         st.sidebar.success(f"Indlæst: {uploaded.name}")
+
 else:
-    local_files = find_local_xlsx()
-    if local_files:
-        options = {f.name: f for f in local_files}
-        choice = st.sidebar.selectbox("Vælg fil", list(options.keys()))
-        if choice:
-            with st.spinner("Indlæser data…"):
-                sheets = load_excel(options[choice])
-            st.sidebar.success(f"Indlæst: {choice}")
+    # Kombiner JSON- og Excel-filer, JSON øverst (nyeste format)
+    local_json = find_local_json()
+    local_xlsx = find_local_xlsx()
+    local_all = {f.name: (f, "json") for f in local_json}
+    local_all.update({f.name: (f, "xlsx") for f in local_xlsx})
+
+    if local_all:
+        chosen_name = st.sidebar.selectbox("Vælg fil", list(local_all.keys()))
+        chosen_path, chosen_fmt = local_all[chosen_name]
+        with st.spinner("Indlæser data…"):
+            if chosen_fmt == "json":
+                sheets = load_json(chosen_path)
+            else:
+                sheets = load_excel(chosen_path)
+        st.sidebar.success(f"Indlæst: {chosen_name}")
     else:
         st.sidebar.warning("Ingen lokale ANALYSE-filer fundet.")
 
@@ -125,7 +179,7 @@ st.sidebar.caption("BridgeAnalytics · Phase 2.1")
 if not sheets:
     st.title("🃏 BridgeAnalytics Dashboard")
     st.info(
-        "**Kom i gang:** Upload eller vælg en BridgeAnalytics Excel-fil i sidepanelet til venstre."
+        "**Kom i gang:** Upload eller vælg en BridgeAnalytics datafil i sidepanelet til venstre."
     )
     with st.expander("Hvad er BridgeAnalytics?"):
         st.markdown(
@@ -140,8 +194,9 @@ if not sheets:
 
             **Workflow:**
             1. Kør `python main.py` for at hente og analysere data
-            2. Upload den genererede Excel-fil her
-            3. Udforsk dine resultater
+            2. Resultatet gemmes som **JSON** (`*ANALYSE*.json`) og Excel (`*ANALYSE*.xlsx`)
+            3. Upload JSON- eller Excel-filen her, eller vælg en lokal fil
+            4. Udforsk dine resultater
             """
         )
     st.stop()
