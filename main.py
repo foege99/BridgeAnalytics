@@ -1,6 +1,9 @@
+import sys
+import argparse
 from datetime import datetime, timedelta
 import pandas as pd
 
+from bridge.data_cache import DataCache
 from bridge.crawler import get_recent_tournaments
 from bridge.scraper import scrape_spilresultater
 
@@ -38,38 +41,169 @@ from bridge.declarer_analysis import (
 HENRIK = "Henrik Friis"
 PER = "Per Føge Jensen"
 
-# ✅ CUTOFF: 7 dage tilbage
-CUTOFF_DATE = datetime.now() - timedelta(days=7)
-
 # Use unique filename to avoid Windows file-lock issues
 OUTPUT_FILE = f"Henrik_Per_ANALYSE_{datetime.now():%Y%m%d_%H%M}.xlsx"
 
 
-def main():
-    print("Starter crawler + scraper + analyse...")
-    print("Cutoff:", CUTOFF_DATE.date())
-
-    # ✅ NY CRAWLER: Returner list of tournaments med sections
-    tournaments = get_recent_tournaments(CUTOFF_DATE)
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description='Bridge Analytics - Scrap og analyser bridge-turneringer med smart caching'
+    )
     
-    if not tournaments:
-        print("Ingen turneringer fundet indenfor cutoff.")
+    parser.add_argument(
+        '--cutoff',
+        type=str,
+        help='Cutoff dato (fra denne dato til i dag). Format: YYYY-MM-DD. Default: sidste 7 dage'
+    )
+    
+    parser.add_argument(
+        '--from',
+        dest='from_date',
+        type=str,
+        help='Start dato for interval. Format: YYYY-MM-DD'
+    )
+    
+    parser.add_argument(
+        '--to',
+        dest='to_date',
+        type=str,
+        help='Slut dato for interval. Format: YYYY-MM-DD'
+    )
+    
+    parser.add_argument(
+        '--force-refresh',
+        action='store_true',
+        help='Tvinger refresh af alle turneringer i perioden'
+    )
+    
+    parser.add_argument(
+        '--cache-status',
+        action='store_true',
+        help='Vis cache status og exit'
+    )
+    
+    parser.add_argument(
+        '--clear-cache',
+        action='store_true',
+        help='Slet hele cache (kræver bekræftelse)'
+    )
+    
+    parser.add_argument(
+        '--backup',
+        action='store_true',
+        help='Lav backup af cache før start'
+    )
+    
+    return parser.parse_args()
+
+
+def main():
+    args = parse_arguments()
+    
+    # ==================== SETUP CACHE ====================
+    print("🚀 Initialiserer cache system...")
+    cache = DataCache(data_dir="data")
+    
+    # ==================== HANDLE SPECIAL FLAGS ====================
+    
+    # Show cache status
+    if args.cache_status:
+        cache.print_cache_status()
         return
-
-    print(f"Antal turneringer fundet: {len(tournaments)}")
-
+    
+    # Clear cache
+    if args.clear_cache:
+        response = input("⚠️  Sikker på du vil slette hele cache? (ja/nej): ")
+        if response.lower() in ['ja', 'yes', 'y']:
+            cache.clear_cache(confirm=True)
+        return
+    
+    # Create backup
+    if args.backup:
+        cache.create_backup()
+    
+    # ==================== PARSE DATE RANGE ====================
+    print("Starter crawler + scraper + analyse...")
+    
+    start_date, end_date = cache.parse_date_range(
+        cutoff=args.cutoff,
+        from_date=args.from_date,
+        to_date=args.to_date
+    )
+    
+    force_refresh = args.force_refresh
+    if force_refresh:
+        print("🔄 FORCE REFRESH MODE - Scraper alt på tværs af regler")
+    
+    # ==================== CRAWL BRIDGE.DK ====================
+    print(f"📡 Søger turneringer på bridge.dk fra {start_date} til {end_date}...")
+    
+    # Crawler finder turneringer fra bridge.dk
+    all_tournaments_on_site = get_recent_tournaments(start_date)
+    
+    if not all_tournaments_on_site:
+        print("Ingen turneringer fundet indenfor perioden.")
+        return
+    
+    print(f"Antal turneringer fundet på bridge.dk: {len(all_tournaments_on_site)}")
+    
+    # Filter turneringer til vores periode
+    tournaments_in_range = [
+        t for t in all_tournaments_on_site 
+        if start_date <= t['date'].date() <= end_date
+    ]
+    
+    print(f"Antal turneringer i période [{start_date} - {end_date}]: {len(tournaments_in_range)}")
+    
+    # ==================== BESLUT OM SCRAPING ====================
+    print("\n📋 Beslutter hvad skal skrabes...")
+    print("="*70)
+    
+    tournaments_to_scrape = []
+    tournaments_to_use_cache = []
+    
+    for tournament in tournaments_in_range:
+        tournament_id = tournament['tournament_id']
+        tournament_date = tournament['date']
+        
+        # Tjek om bruger specifikt bad om denne periode (hvis --from/--to er brugt)
+        user_requested_older = bool(args.from_date and args.to_date)
+        
+        should_scrape = cache.should_scrape_tournament(
+            tournament_id=tournament_id,
+            tournament_date=tournament_date,
+            force_refresh=force_refresh,
+            user_requested_older=user_requested_older
+        )
+        
+        if should_scrape:
+            tournaments_to_scrape.append(tournament)
+        else:
+            tournaments_to_use_cache.append(tournament)
+    
+    print("="*70)
+    print(f"\n📊 Beslutninger:")
+    print(f"  🔄 SCRAPE: {len(tournaments_to_scrape)} turneringer")
+    print(f"  💾 CACHE: {len(tournaments_to_use_cache)} turneringer")
+    
+    # ==================== SCRAPE & CACHE ====================
+    print("\n🌐 Starter scraping...")
     all_rows = []
-    tournaments_processed = 0
-
-    for t_idx, tournament in enumerate(tournaments, 1):
+    tournaments_scraped = 0
+    
+    for t_idx, tournament in enumerate(tournaments_to_scrape, 1):
         tournament_id = tournament['tournament_id']
         tdate = tournament['date']
         sections = tournament['sections']
         
-        print(f"\n({t_idx}/{len(tournaments)}) {tdate.date()} – Turnering {tournament_id}")
-        print(f"  Sections fundet: {', '.join([s['name'] for s in sections])}")
-
-        # ✅ SCRAPE ALLE SECTIONS (A, B, C, D...)
+        print(f"\n({t_idx}/{len(tournaments_to_scrape)}) SCRAPE: {tdate.date()} – Turnering {tournament_id}")
+        print(f"  Sections: {', '.join([s['name'] for s in sections])}")
+        
+        tournament_rows = []
+        tournament_data = {"tournament_id": tournament_id, "date": str(tdate.date()), "sections": {}}
+        
+        # Scrape hver section
         for section in sections:
             section_name = section['name']
             section_url = section['spilresultater_url']
@@ -84,42 +218,77 @@ def main():
                     debug_hands=False,
                 )
                 
-                # ✅ TILFØJ SECTION KOLONNE (noter: 'row' kommer allerede fra scraper!)
+                # Tilføj section kolonne
                 for row in rows:
                     row['section'] = section_name
                 
                 print(f"      ✓ {len(rows)} rækker")
-                all_rows.extend(rows)
+                tournament_rows.extend(rows)
+                tournament_data["sections"][section_name] = rows
                 
             except Exception as e:
                 print(f"      !!! Fejl ved scraping: {e}")
-
-        tournaments_processed += 1
         
-        # ✅ EARLY EXIT: Hvis CUTOFF <= 7 dage, stop efter 1-2 turneringer
-        if (CUTOFF_DATE.date() >= (datetime.now() - timedelta(days=7)).date()) and tournaments_processed >= 2:
-            print(f"\n⏸ CUTOFF <= 7 dage – stopper efter {tournaments_processed} turneringer")
-            break
-
+        # Gem i cache
+        if tournament_rows:
+            cache.save_tournament_data(
+                tournament_id=tournament_id,
+                tournament_date=tdate,
+                sections=sections,
+                data=tournament_data
+            )
+            all_rows.extend(tournament_rows)
+            tournaments_scraped += 1
+    
+        # ==================== LOAD CACHED DATA ====================
+    print(f"\n💾 Indlæser {len(tournaments_to_use_cache)} turneringer fra cache...")
+    
+    for tournament in tournaments_to_use_cache:
+        tournament_id = tournament['tournament_id']
+        tdate = tournament['date']
+        
+        cached_data = cache.get_cached_tournament(tournament_id)
+        
+        if cached_data:
+            print(f"  ✓ Turnering {tournament_id} ({tdate.date()}) - fra cache")
+            
+            # ✅ KONVERTER strings tilbage til datetime
+            # Fordi JSON lagrer alt som strings
+            for section_name, rows in cached_data.get("sections", {}).items():
+                for row in rows:
+                    row['section'] = section_name
+                    
+                    # Konverter date strings tilbage til date objekter
+                    if 'date' in row and isinstance(row['date'], str):
+                        try:
+                            row['date'] = datetime.strptime(row['date'], '%Y-%m-%d').date()
+                        except:
+                            pass
+                    
+                    all_rows.append(row)
+        else:
+            print(f"  ❌ Turnering {tournament_id} ({tdate.date()}) - FEJL, cache findes ikke")# ==================== PROCESS DATA ====================
+    
     if not all_rows:
         print("Ingen data fundet.")
         return
-
+    
     df_all = pd.DataFrame(all_rows)
-
-    print(f"\n✓ I alt {len(df_all)} rækker fra {tournaments_processed} turneringer")
+    
+    print(f"\n✓ I alt {len(df_all)} rækker fra {len(tournaments_in_range)} turneringer")
     print(f"  Sections: {df_all['section'].unique().tolist()}")
-
+    print(f"  Scraped: {tournaments_scraped}, fra Cache: {len(tournaments_to_use_cache)}")
+    
     print("\nTilføjer hånd-features...")
     df_all = add_hand_features(df_all)
-
-    # ✅ TILFØJ PHASE 2.1 REFERENCE-LAG (bruger ALLE sections som reference)
+    
+    # ✅ TILFØJ PHASE 2.1 REFERENCE-LAG
     print("Tilføjer Phase 2.1 reference-lag (fra alle sections A+B+C+D...)...")
     df_all = add_phase21_fields(df_all, n_min=12)
     print("  ✓ Phase 2.1 felt-data beregnet")
     print(f"    - Board Types fundet: {df_all['Board_Type'].value_counts().to_dict()}")
     print(f"    - Split boards (competitive): {df_all['competitive_flag'].sum()}")
-
+    
     # ✅ BOARD REVIEW ANALYSE (kun A-rækken)
     print("\nGenererer Board Review rapporter (kun A-rækken)...")
     df_a_only = df_all[df_all['section'] == 'A'].copy()
@@ -135,7 +304,7 @@ def main():
     review_stats = board_review_statistics(df_board_review_all, df_board_review_summary)
     print(f"  ✓ Board Review: {len(df_board_review_all)} boards med hand-records")
     print_board_review_stats(review_stats)
-
+    
     # ✅ DECLARER ANALYSIS (kun A-rækken)
     print("\nGenererer Declarer Analysis...")
     df_pair = df_a_only[
@@ -145,7 +314,7 @@ def main():
             axis=1
         )
     ].copy()
-
+    
     if len(df_pair) == 0:
         print("  (Ingen boards hvor Henrik og Per spiller sammen i A-rækken)")
         df_declarer_analysis = pd.DataFrame()
@@ -160,8 +329,8 @@ def main():
         
         # Print highlights
         print_declarer_analysis_highlights(df_declarer_analysis, top_n=5)
-
-    # ✅ KLASSISKE RAPPORTER (fra hele A-rækken, ikke kun hvor de spiller sammen)
+    
+    # ✅ KLASSISKE RAPPORTER
     print("\nGenererer klassiske rapporter...")
     
     # Filter til kun boards hvor de spiller sammen
@@ -190,13 +359,13 @@ def main():
         df_evening_matrix = pd.DataFrame()
         df_quarterly = pd.DataFrame()
         print("  (Ingen data til klassiske rapporter)")
-
-    # ✅ FIELD REPORTS (alle par, fra hele feltet)
+    
+    # ✅ FIELD REPORTS
     print("\nGenererer Field Reports...")
     df_field_defense = make_pair_field_report(df_all, min_boards=50)
     df_field_declarer = make_pair_declarer_report(df_all, min_boards=50)
     print(f"  ✓ Field Reports: {len(df_field_defense)} par i defense, {len(df_field_declarer)} par i declarer")
-
+    
     # ✅ SKRIV EXCEL
     print(f"\nSkriver Excel: {OUTPUT_FILE}")
     with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
@@ -227,6 +396,9 @@ def main():
             df_field_declarer.to_excel(writer, sheet_name='Field_Declarer', index=False)
     
     print(f"✅ Analyse færdig! Output: {OUTPUT_FILE}")
+    
+    # ==================== SHOW CACHE STATUS ====================
+    cache.print_cache_status()
 
 
 if __name__ == "__main__":

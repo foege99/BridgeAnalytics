@@ -74,11 +74,11 @@ def build_spilresultater_url(section_url):
 def get_recent_tournaments(cutoff_date):
     """
     Hent turneringer fra overview-siden.
-    
+
     For hver turnering, find ALLE sections (A, B, C...)
-    
+
     ✅ EARLY STOP: Stopper når vi når turneringer ældre end cutoff_date
-    
+
     Returns:
     --------
     list of dict:
@@ -88,9 +88,9 @@ def get_recent_tournaments(cutoff_date):
                 'date': datetime(...),
                 'sections': [
                     {
-                        'name': 'A', 
-                        'filename': 'MT669GT1543.XML', 
-                        'gt_number': 1543, 
+                        'name': 'A',
+                        'filename': 'MT669GT1543.XML',
+                        'gt_number': 1543,
                         'url': '...resultater.php...',
                         'spilresultater_url': '...spilresultater.php...&round=1&half=1'
                     },
@@ -100,7 +100,11 @@ def get_recent_tournaments(cutoff_date):
             ...
         ]
     """
-    
+
+    # ✅ Konverter cutoff_date til date hvis det er datetime
+    if isinstance(cutoff_date, datetime):
+        cutoff_date = cutoff_date.date()
+
     soup = get_soup(OVERVIEW)
 
     tournament_pages = [
@@ -120,61 +124,61 @@ def get_recent_tournaments(cutoff_date):
             continue
 
         date = parse_date_from_title(h1.get_text())
-        
+
         # ✅ CUTOFF-CHECK: Hvis for gammel, mark og stop loop
-        if not date or date < cutoff_date:
-            print(f"    → Skipped (older than {cutoff_date.date()})")
+        if not date or date.date() < cutoff_date:
+            print(f"    → Skipped (older than {cutoff_date})")
             reached_cutoff = True
-            break  # ✅ STOP HER – ingen grund til at parse mere
-        
+            break  # ✅ STOP HER
+
         print(f"    → {date.date()}")
 
         # Find alle XML-links på turnerings-siden
         for a in tsoup.find_all("a", href=True):
             if "resultater.php?filename=2183/" in a["href"]:
                 res_url = urljoin(BASE, a["href"])
-                
+
                 # Extrahér filnavn
                 m = re.search(r'filename=2183/([^&]+)', res_url)
                 if not m:
                     continue
-                
+
                 filename = m.group(1)
                 tournament_id = extract_tournament_id(filename)
                 gt_number = extract_gt_number(filename)
-                
+
                 if not tournament_id or not gt_number:
                     continue
-                
+
                 # Initialiser turnering hvis ikke eksisterer
                 if tournament_id not in tournaments:
                     tournaments[tournament_id] = {
                         'date': date,
                         'urls': []
                     }
-                
+
                 tournaments[tournament_id]['urls'].append({
                     'filename': filename,
                     'gt_number': gt_number,
                     'url': res_url
                 })
-    
+
     # Konverter til liste med sections sorted efter GT-nummer
     result = []
     for tournament_id in sorted(tournaments.keys(), reverse=True):
         tdata = tournaments[tournament_id]
         date = tdata['date']
-        
+
         # Sort URLs efter GT-nummer (A=1543, B=1544, C=1545...)
         urls_sorted = sorted(tdata['urls'], key=lambda x: x['gt_number'])
-        
+
         # Assign section names (A, B, C...)
         sections = []
         for section_num, url_data in enumerate(urls_sorted, start=1):
             section_name = get_section_name(section_num)
             resultater_url = url_data['url']
             spilresultater_url = build_spilresultater_url(resultater_url)
-            
+
             sections.append({
                 'name': section_name,
                 'filename': url_data['filename'],
@@ -182,18 +186,17 @@ def get_recent_tournaments(cutoff_date):
                 'url': resultater_url,
                 'spilresultater_url': spilresultater_url
             })
-        
+
         result.append({
             'tournament_id': tournament_id,
             'date': date,
             'sections': sections
         })
-    
-    if reached_cutoff:
-        print(f"✅ Early stop: Nåede cutoff-dato ({cutoff_date.date()})")
-    
-    return result
 
+    if reached_cutoff:
+        print(f"✅ Early stop: Nåede cutoff-dato ({cutoff_date})")
+
+    return result
 
 # Backwards compatibility: hvis gammel kode kalder get_recent_tournaments
 # og forventer dict med {url: date}
