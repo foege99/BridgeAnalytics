@@ -18,6 +18,29 @@ RANK_TRANSLATE = {"E": "A", "K": "K", "D": "Q", "B": "J", "T": "T"}
 RANK_CHARS_DK = set("EKDBT98765432")
 SUIT_CHARS = set(["♠", "♥", "♦", "♣"])
 
+# ----------------------------
+# Dealer / vulnerability
+# ----------------------------
+
+DEALER_MAP = {"Nord": "N", "Syd": "S", "Øst": "Ø", "Vest": "V"}
+
+# ----------------------------
+# Double Dummy constants
+# ----------------------------
+
+_DD_DIRS = ["N", "S", "Ø", "V"]
+_DD_STRAINS = ["NT", "S", "H", "D", "C"]  # NT, ♠, ♥, ♦, ♣
+_DD_FIELDS = (
+    [f"dd_{d}_{s}" for d in _DD_DIRS for s in _DD_STRAINS]
+    + [f"dd_{d}_HCP" for d in _DD_DIRS]
+)
+
+# ----------------------------
+# Par regex
+# ----------------------------
+
+PAR_RE = re.compile(r'Par:\s*(-?\d+)\s+([1-7](?:NT|[♠♥♦♣]))\s+(\S+)', re.UNICODE)
+
 def clean(text: str) -> str:
     if not text:
         return ""
@@ -163,6 +186,123 @@ def _debug_print_handcheck(board: int, hands: dict):
     print(f"    Board {board} hands: {hands}")
 
 # ----------------------------
+# Dealer / vul parsing
+# ----------------------------
+
+def parse_dealer_vul(game_div) -> dict:
+    """Parse dealer and vulnerability from a game div.
+
+    Returns a dict with keys 'dealer' and 'vul'.
+    dealer is normalized to compass letter (N/S/Ø/V) via DEALER_MAP.
+    vul is stored raw as seen in the HTML ('-', 'NS', 'ØV', 'Alle', …).
+    """
+    result = {"dealer": None, "vul": None}
+
+    dealer_span = game_div.select_one("span.dealer")
+    if dealer_span:
+        raw = clean(dealer_span.get_text())
+        result["dealer"] = DEALER_MAP.get(raw, raw)
+
+    vul_span = game_div.select_one("span.vulnerability")
+    if vul_span:
+        result["vul"] = clean(vul_span.get_text())
+
+    return result
+
+# ----------------------------
+# Double Dummy table parsing
+# ----------------------------
+
+def parse_dd_table(game_div) -> dict:
+    """Parse Double Dummy tricks table and HP from a game div.
+
+    Looks for a div.uk-grid whose direct child elements include cells
+    with text 'NT' and 'HP', then reads a 5×7 grid (header + 4 direction
+    rows, each with 7 columns: label, NT, ♠, ♥, ♦, ♣, HP).
+
+    Returns a dict with 'dd_valid' (bool) and, when True, all dd_* fields.
+    """
+    null_result = {"dd_valid": False}
+
+    dd_grid = None
+    for grid in game_div.find_all("div", class_="uk-grid"):
+        child_texts = [clean(ch.get_text()) for ch in grid.children if ch.name]
+        if "NT" in child_texts and "HP" in child_texts:
+            dd_grid = grid
+            break
+
+    if dd_grid is None:
+        return null_result
+
+    cells = [clean(ch.get_text()) for ch in dd_grid.children if ch.name]
+
+    # Locate header row: "NT" should be at column index 1 (second cell)
+    try:
+        nt_pos = cells.index("NT")
+    except ValueError:
+        return null_result
+
+    n_cols = 7  # label + NT + ♠ + ♥ + ♦ + ♣ + HP
+    header_start = nt_pos - 1
+
+    if header_start < 0:
+        return null_result
+    if header_start + n_cols > len(cells):
+        return null_result
+    if cells[header_start + 6] != "HP":
+        return null_result
+
+    # Need at least 4 data rows after the header
+    if header_start + n_cols * 5 > len(cells):
+        return null_result
+
+    result = {"dd_valid": True}
+
+    for row_idx, dir_code in enumerate(_DD_DIRS):
+        row_start = header_start + n_cols * (row_idx + 1)
+        row = cells[row_start:row_start + n_cols]
+        # row[1..5] → NT/♠/♥/♦/♣ tricks, row[6] → HP
+        for col_idx, strain_key in enumerate(_DD_STRAINS):
+            val_str = row[col_idx + 1] if col_idx + 1 < len(row) else ""
+            try:
+                result[f"dd_{dir_code}_{strain_key}"] = int(val_str)
+            except (ValueError, TypeError):
+                result[f"dd_{dir_code}_{strain_key}"] = None
+        try:
+            result[f"dd_{dir_code}_HCP"] = int(row[6]) if len(row) > 6 else None
+        except (ValueError, TypeError):
+            result[f"dd_{dir_code}_HCP"] = None
+
+    return result
+
+# ----------------------------
+# Par parsing
+# ----------------------------
+
+def parse_par(game_div) -> dict:
+    """Parse par contract/score from a game div.
+
+    Looks for text like 'Par: -980 6♠ ØV' anywhere in the div.
+
+    Returns a dict with 'par_score' (int or None), 'par_contract' (str or None),
+    'par_side' (str or None).
+    """
+    null_result = {"par_score": None, "par_contract": None, "par_side": None}
+    text = clean(game_div.get_text(" "))
+    m = PAR_RE.search(text)
+    if not m:
+        return null_result
+    try:
+        score = int(m.group(1))
+    except (ValueError, TypeError):
+        score = None
+    return {
+        "par_score": score,
+        "par_contract": m.group(2),
+        "par_side": m.group(3),
+    }
+
+# ----------------------------
 # Hovedscrape
 # ----------------------------
 
@@ -185,6 +325,7 @@ def scrape_spilresultater(
     soup = get_soup(spil_url)
     rows = []
     hands_by_board = {}
+    board_meta = {}
     
     # Extract row letter from page content
     row_letter = extract_row_from_page(soup)
@@ -208,6 +349,13 @@ def scrape_spilresultater(
             hands_by_board[board] = parse_hands_from_game_div(game)
             if debug_hands and hands_by_board[board]:
                 _debug_print_handcheck(board, hands_by_board[board])
+
+        if board not in board_meta:
+            meta = {}
+            meta.update(parse_dealer_vul(game))
+            meta.update(parse_dd_table(game))
+            meta.update(parse_par(game))
+            board_meta[board] = meta
 
         for li in game.select("ul.bridge li.table"):
             teams = li.select("div.team-name.uk-hidden-small")
@@ -241,8 +389,9 @@ def scrape_spilresultater(
             pct_ew = safe_pct(imp_vals[3]) if len(imp_vals) > 3 else None
 
             hb = hands_by_board.get(board, {}) if include_hands else {}
+            bm = board_meta.get(board, {})
 
-            rows.append({
+            row_dict = {
                 "tournament_date": tournament_date.date() if tournament_date else None,
                 "board": board,
                 "row": row_letter,
@@ -270,7 +419,22 @@ def scrape_spilresultater(
                 "Ø_hand": hb.get("Ø_hand"),
                 "S_hand": hb.get("S_hand"),
                 "V_hand": hb.get("V_hand"),
-            })
+
+                # Dealer / vulnerability
+                "dealer": bm.get("dealer"),
+                "vul": bm.get("vul"),
+
+                # Double Dummy
+                "dd_valid": bm.get("dd_valid", False),
+
+                # Par
+                "par_score": bm.get("par_score"),
+                "par_contract": bm.get("par_contract"),
+                "par_side": bm.get("par_side"),
+            }
+            for key in _DD_FIELDS:
+                row_dict[key] = bm.get(key)
+            rows.append(row_dict)
 
     if debug_hands and include_hands and not any(hands_by_board.values()):
         print(f"  ⚠️ ADVARSEL: ingen hænder parsed! Check HTML struktur ovenfor")
