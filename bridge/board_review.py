@@ -18,6 +18,15 @@ _ROTATIONS = {
     'V': {'bottom': 'V', 'top': 'Ø', 'left': 'N', 'right': 'S'},
 }
 
+# Vulnerability → Danish display text
+_VUL_DK = {
+    '-':    'Ingen i zonen',
+    'NS':   'NS i zonen',
+    'ØV':   'ØV i zonen',
+    'EW':   'ØV i zonen',
+    'Alle': 'Alle i zonen',
+}
+
 
 def _hand_suit_lines(hand_str) -> list:
     """Convert dot-format hand string (S.H.D.C) to 4 suit lines with symbols."""
@@ -143,15 +152,23 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     def _get_hcp(dir_code: str):
         """Return HCP for *dir_code* as int, or '?' if unavailable.
 
-        Looks up the per-direction HCP column (e.g. 'N_HCP') first;
-        falls back to computing from the dot-format hand string.
+        Priority: dd_{dir}_HCP (when dd_valid) → per-direction HCP column →
+        computed from dot-format hand string.
         """
+        # 1) DD HCP when available
+        if per_row.get('dd_valid'):
+            dd_col = f'dd_{dir_code}_HCP'
+            if dd_col in per_row.index:
+                val = per_row.get(dd_col)
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    return int(val)
+        # 2) Regular per-direction HCP column
         col = _hcp_col_map.get(dir_code, '')
         if col and col in per_row.index:
             val = per_row.get(col)
             if val is not None and not (isinstance(val, float) and pd.isna(val)):
                 return int(val)
-        # Fallback: compute from hand string
+        # 3) Fallback: compute from hand string
         hand = dir_to_hand.get(dir_code)
         if hand is not None and not (isinstance(hand, float) and pd.isna(hand)):
             try:
@@ -219,12 +236,12 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     # --- Header block (col E) ---
     dealer_val = _get_field(per_row, 'dealer', 'Dealer')
     zone_val = _get_field(per_row, 'vul', 'vulnerability', 'zone', 'Zone')
+    zone_display = _VUL_DK.get(zone_val, zone_val) if zone_val is not None else '(ukendt)'
     ws.cell(row=1, column=5, value=f"Turnering: {latest_date}")
     ws.cell(row=2, column=5, value="Board: 1")
     ws.cell(row=3, column=5,
             value=f"Dealer: {dealer_val if dealer_val is not None else '(ukendt)'}")
-    ws.cell(row=4, column=5,
-            value=f"Zone: {zone_val if zone_val is not None else '(ukendt)'}")
+    ws.cell(row=4, column=5, value=f"Zone: {zone_display}")
 
     # --- Top hand ---
     _bold(ws.cell(row=2, column=2, value=_player_label(top_dir)))
@@ -253,7 +270,19 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     tricks_val = _get_field(per_row, 'tricks')
 
     def _side_hcp_total(col_name: str, dir1: str, dir2: str):
-        """Return combined HCP for a side from a column, or by summing per-direction HCP."""
+        """Return combined HCP for a side.
+
+        Priority: dd HCP sum (when dd_valid) → combined column → sum per-direction HCP.
+        """
+        if per_row.get('dd_valid'):
+            dd1 = per_row.get(f'dd_{dir1}_HCP')
+            dd2 = per_row.get(f'dd_{dir2}_HCP')
+            if (dd1 is not None and not (isinstance(dd1, float) and pd.isna(dd1)) and
+                    dd2 is not None and not (isinstance(dd2, float) and pd.isna(dd2))):
+                try:
+                    return int(dd1) + int(dd2)
+                except (ValueError, TypeError):
+                    pass
         val = _get_field(per_row, col_name)
         if val is not None:
             return val
@@ -272,6 +301,19 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     ws.cell(row=11, column=5, value=f"Resultat: {tricks_val if tricks_val is not None else '(ukendt)'}")
     ws.cell(row=12, column=5, value=f"NS HCP: {ns_hcp if ns_hcp is not None else '(ukendt)'}")
     ws.cell(row=13, column=5, value=f"ØV HCP: {ov_hcp if ov_hcp is not None else '(ukendt)'}")
+
+    # Par (row 14, col E)
+    par_score = _get_field(per_row, 'par_score')
+    par_contract = _get_field(per_row, 'par_contract')
+    par_side = _get_field(per_row, 'par_side')
+    if par_score is not None and par_contract is not None:
+        par_text = f"Par: {par_score} {par_contract}"
+        if par_side:
+            par_text += f" {par_side}"
+    else:
+        par_text = None
+    ws.cell(row=14, column=5,
+            value=par_text if par_text is not None else "Par: (ukendt)")
 
     # --- Column widths ---
     ws.column_dimensions['A'].width = 22
@@ -438,6 +480,22 @@ def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
         'top2_count_2',
         'reference_scope',
         'N_section_played',
+
+        # ✅ DEALER / VULNERABILITY
+        'dealer',
+        'vul',
+
+        # ✅ DOUBLE DUMMY
+        'dd_valid',
+        'dd_N_NT', 'dd_N_S', 'dd_N_H', 'dd_N_D', 'dd_N_C', 'dd_N_HCP',
+        'dd_S_NT', 'dd_S_S', 'dd_S_H', 'dd_S_D', 'dd_S_C', 'dd_S_HCP',
+        'dd_Ø_NT', 'dd_Ø_S', 'dd_Ø_H', 'dd_Ø_D', 'dd_Ø_C', 'dd_Ø_HCP',
+        'dd_V_NT', 'dd_V_S', 'dd_V_H', 'dd_V_D', 'dd_V_C', 'dd_V_HCP',
+
+        # ✅ PAR
+        'par_score',
+        'par_contract',
+        'par_side',
     ]
 
     # Filtrer til kolonner som eksisterer (computed cols tilføjes efter copy)
