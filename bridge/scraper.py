@@ -373,6 +373,7 @@ def scrape_spilresultater(
             contract_div = li.select_one("div.info.contract")
             contract_raw = clean(contract_div.get_text(" ", strip=True)) if contract_div else ""
             decl, level, strain, contract_clean = parse_contract(contract_raw)
+            decl = decl or ""
 
             lead = ""
             tricks = None
@@ -384,9 +385,46 @@ def scrape_spilresultater(
                 if t.isdigit():
                     tricks = int(t)
 
-            imp_vals = [clean(d.get_text(" ", strip=True)) for d in li.select("div.info.imp")]
-            pct_ns = safe_pct(imp_vals[2]) if len(imp_vals) > 2 else None
-            pct_ew = safe_pct(imp_vals[3]) if len(imp_vals) > 3 else None
+            # ----------------------------------------------------------
+            # Score (bridge.dk style: only one side filled; do NOT mirror)
+            # ----------------------------------------------------------
+            score_divs = li.select("div.info.tableScore")
+            score_texts = [clean(d.get_text(" ", strip=True)) for d in score_divs]
+
+            def _parse_int_or_none(s: str):
+                if not s:
+                    return None
+                s2 = s.replace("\xa0", "").replace(" ", "")
+                try:
+                    return int(s2)
+                except Exception:
+                    return None
+
+            score_ns = _parse_int_or_none(score_texts[0]) if len(score_texts) > 0 else None
+            score_ew = _parse_int_or_none(score_texts[1]) if len(score_texts) > 1 else None
+
+            # ----------------------------------------------------------
+            # Points (MP/IMP) and Pct parsing
+            # ----------------------------------------------------------
+            imp_divs = li.select("div.info.imp")
+
+            point_texts = []
+            pct_texts = []
+            for d in imp_divs:
+                classes = set(d.get("class", []))
+                txt = clean(d.get_text(" ", strip=True))
+                if not txt:
+                    continue
+                is_pct = ("uk-hidden-medium" in classes) and ("uk-hidden-small" in classes)
+                if is_pct:
+                    pct_texts.append(txt)
+                else:
+                    point_texts.append(txt)
+
+            point_ns = safe_pct(point_texts[0]) if len(point_texts) > 0 else None
+            point_ew = safe_pct(point_texts[1]) if len(point_texts) > 1 else None
+            pct_ns = safe_pct(pct_texts[0]) if len(pct_texts) > 0 else None
+            pct_ew = safe_pct(pct_texts[1]) if len(pct_texts) > 1 else None
 
             hb = hands_by_board.get(board, {}) if include_hands else {}
             bm = board_meta.get(board, {})
@@ -394,12 +432,16 @@ def scrape_spilresultater(
             row_dict = {
                 "tournament_date": tournament_date.date() if tournament_date else None,
                 "board": board,
+                "board_no": board,
                 "row": row_letter,
 
                 "ns1": ns_parts[0],
                 "ns2": ns_parts[1],
                 "ew1": ew_parts[0],
                 "ew2": ew_parts[1],
+
+                "ns_pair": f"{ns_parts[0]} - {ns_parts[1]}",
+                "ew_pair": f"{ew_parts[0]} - {ew_parts[1]}",
 
                 "decl": decl,
                 "level": level,
@@ -410,6 +452,10 @@ def scrape_spilresultater(
                 "lead": lead,
                 "tricks": tricks,
 
+                "score_NS": score_ns,
+                "score_ØV": score_ew,
+                "point_NS": point_ns,
+                "point_ØV": point_ew,
                 "pct_NS": pct_ns,
                 "pct_ØV": pct_ew,
 
@@ -420,14 +466,11 @@ def scrape_spilresultater(
                 "S_hand": hb.get("S_hand"),
                 "V_hand": hb.get("V_hand"),
 
-                # Dealer / vulnerability
                 "dealer": bm.get("dealer"),
                 "vul": bm.get("vul"),
 
-                # Double Dummy
                 "dd_valid": bm.get("dd_valid", False),
 
-                # Par
                 "par_score": bm.get("par_score"),
                 "par_contract": bm.get("par_contract"),
                 "par_side": bm.get("par_side"),
@@ -435,7 +478,6 @@ def scrape_spilresultater(
             for key in _DD_FIELDS:
                 row_dict[key] = bm.get(key)
             rows.append(row_dict)
-
     if debug_hands and include_hands and not any(hands_by_board.values()):
         print(f"  ⚠️ ADVARSEL: ingen hænder parsed! Check HTML struktur ovenfor")
 

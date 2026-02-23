@@ -228,7 +228,7 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     #   Row 14 : bottom player name (col B)
     #   Rows 15-18 : bottom hand suits (col B)
     # ------------------------------------------------------------------
-    section_val = per_row.get('section', '')
+    section_val = per_row.get('row', per_row.get('section', ''))
     ws.cell(row=1, column=2,
             value=f"Spil 1 – {latest_date} (sektion {section_val})")
     _bold(ws.cell(row=1, column=2))
@@ -321,8 +321,8 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     ws.column_dimensions['C'].width = 22
     ws.column_dimensions['E'].width = 25
 
-    # ------------------------------------------------------------------
-    # 6. Mini traveller table  G1:Q2
+       # ------------------------------------------------------------------
+    # 6. Traveller table (ALL results for same tournament_date + row + board_no)
     # ------------------------------------------------------------------
     try:
         from openpyxl.styles import PatternFill, Border, Side, Alignment
@@ -331,82 +331,124 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
         _styles_available = False
 
     _GRAY_FILL = 'D9D9D9'  # shared fill color for header cells
+    _HILITE_YELLOW = 'FFF2CC'
+    _ZEBRA_FILL = 'F7F7F7'
 
+    # Traveller headers (bridge.dk style)
     _TRAVELLER_HEADERS = [
-        'NS-par', 'ØV-par', 'Kontrakt', 'Udspil', 'Stik',
-        'Score NS', 'Score ØV', 'MP/IMP NS', 'MP/IMP ØV', 'Pct NS', 'Pct ØV',
+        'NS', 'ØV', 'Kontrakt', 'Udspil', 'Stik',
+        'Score NS', 'Score ØV', 'Point NS', 'Point ØV', 'Pct NS', 'Pct ØV',
     ]
-    # column G = 7  …  Q = 17
-    _TRAV_START_COL = 7
+    _TRAV_START_COL = 7  # G
+    _TRAV_HEADER_ROW = 1
+    _TRAV_DATA_START_ROW = 2
 
     def _apply_header_style(cell) -> None:
         if not _styles_available:
             return
         cell.font = Font(bold=True) if Font is not None else cell.font
         cell.fill = PatternFill(fill_type='solid', fgColor=_GRAY_FILL)
-        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
         thin = Side(style='thin')
         cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    def _apply_data_style(cell, align: str = 'center') -> None:
+    def _apply_data_style(cell, align: str = 'center', fill_color: str | None = None) -> None:
         if not _styles_available:
             return
         thin = Side(style='thin')
         cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
-        cell.alignment = Alignment(horizontal=align, vertical='center')
+        cell.alignment = Alignment(horizontal=align, vertical='center', wrap_text=True)
+        if fill_color:
+            cell.fill = PatternFill(fill_type='solid', fgColor=fill_color)
 
-    # Write header row
+    # Filter to all results for this board/date/section
+    cur_date = per_row.get('tournament_date')
+    cur_board = per_row.get('board_no')
+    cur_section = per_row.get('row', per_row.get('section'))
+
+    df_trav = df_latest.copy()
+    if cur_date is not None:
+        df_trav = df_trav[df_trav['tournament_date'] == cur_date]
+    if cur_board is not None and 'board_no' in df_trav.columns:
+        df_trav = df_trav[df_trav['board_no'] == cur_board]
+    if cur_section is not None and 'row' in df_trav.columns:
+        df_trav = df_trav[df_trav['row'] == cur_section]
+
+    # If we still ended with empty (should not happen), fall back to df_b1
+    if df_trav.empty:
+        df_trav = df_b1.copy()
+
+    # Build traveller rows
+    def _pair_text(r, side: str) -> str:
+        if side == 'NS':
+            val = _get_field(r, 'ns_pair')
+            if val:
+                return str(val)
+            a = _get_field(r, 'ns1') or ''
+            b = _get_field(r, 'ns2') or ''
+            return " - ".join([p for p in [a, b] if p])
+        else:
+            val = _get_field(r, 'ew_pair')
+            if val:
+                return str(val)
+            a = _get_field(r, 'ew1') or ''
+            b = _get_field(r, 'ew2') or ''
+            return " - ".join([p for p in [a, b] if p])
+
+    # Write header
     for i, header in enumerate(_TRAVELLER_HEADERS):
-        cell = ws.cell(row=1, column=_TRAV_START_COL + i, value=header)
+        cell = ws.cell(row=_TRAV_HEADER_ROW, column=_TRAV_START_COL + i, value=header)
         _apply_header_style(cell)
 
-    # Build data row values
-    ns_names = ' / '.join(filter(None, [
-        _get_field(per_row, 'ns1') or '',
-        _get_field(per_row, 'ns2') or '',
-    ]))
-    ov_names = ' / '.join(filter(None, [
-        _get_field(per_row, 'ew1') or '',
-        _get_field(per_row, 'ew2') or '',
-    ]))
-    trav_contract = _get_field(per_row, 'contract')
-    trav_lead = _get_field(per_row, 'lead')
-    trav_tricks = _get_field(per_row, 'tricks')
-    trav_score_ns = _get_field(per_row, 'score_NS', 'score_ns', 'NS_score', 'score')
-    trav_score_ov = _get_field(per_row, 'score_ØV', 'score_ew', 'ØV_score', 'score_EW')
-    trav_mp_ns = _get_field(per_row, 'mp_NS', 'imp_NS', 'mp_ns', 'imp_ns')
-    trav_mp_ov = _get_field(per_row, 'mp_ØV', 'imp_ØV', 'mp_ew', 'imp_ew')
-    trav_pct_ns = _get_field(per_row, 'pct_NS')
-    trav_pct_ov = _get_field(per_row, 'pct_ØV', 'pct_EW', 'pct_ew')
+    # Determine highlight row: any row containing both names in either NS or ØV text
+    def _is_target_pair(ns_txt: str, ew_txt: str) -> bool:
+        blob = f"{ns_txt} {ew_txt}".lower()
+        return ("henrik friis" in blob) and ("per føge jensen" in blob)
 
-    _TRAV_DATA = [
-        (ns_names,       'left'),
-        (ov_names,       'left'),
-        (trav_contract,  'center'),
-        (trav_lead,      'center'),
-        (trav_tricks,    'right'),
-        (trav_score_ns,  'right'),
-        (trav_score_ov,  'right'),
-        (trav_mp_ns,     'right'),
-        (trav_mp_ov,     'right'),
-        (trav_pct_ns,    'right'),
-        (trav_pct_ov,    'right'),
-    ]
+    # Write data rows
+    for ridx, (_, r) in enumerate(df_trav.iterrows(), start=0):
+        out_row = _TRAV_DATA_START_ROW + ridx
 
-    for i, (value, align) in enumerate(_TRAV_DATA):
-        cell = ws.cell(row=2, column=_TRAV_START_COL + i, value=value)
-        _apply_data_style(cell, align)
+        ns_txt = _pair_text(r, 'NS')
+        ew_txt = _pair_text(r, 'EW')
 
-    # Column widths for traveller columns
-    _TRAV_COL_WIDTHS = [18, 18, 12, 10, 6, 10, 10, 10, 10, 8, 8]
+        values_and_align = [
+            (ns_txt, 'left'),
+            (ew_txt, 'left'),
+            (_get_field(r, 'contract'), 'center'),
+            (_get_field(r, 'lead'), 'center'),
+            (_get_field(r, 'tricks'), 'right'),
+            (_get_field(r, 'score_NS', 'score_ns', 'NS_score', 'score'), 'right'),
+            (_get_field(r, 'score_ØV', 'score_ew', 'ØV_score', 'score_EW'), 'right'),
+            (_get_field(r, 'point_NS', 'mp_NS', 'imp_NS', 'mp_ns', 'imp_ns'), 'right'),
+            (_get_field(r, 'point_ØV', 'mp_ØV', 'imp_ØV', 'mp_ew', 'imp_ew'), 'right'),
+            (_get_field(r, 'pct_NS', 'pct_ns'), 'right'),
+            (_get_field(r, 'pct_ØV', 'pct_EW', 'pct_ew'), 'right'),
+        ]
+
+        # Zebra + highlight
+        fill = None
+        if _is_target_pair(ns_txt, ew_txt):
+            fill = _HILITE_YELLOW
+        elif (ridx % 2) == 1:
+            fill = _ZEBRA_FILL
+
+        for cidx, (val, align) in enumerate(values_and_align):
+            cell = ws.cell(row=out_row, column=_TRAV_START_COL + cidx, value=val)
+            _apply_data_style(cell, align=align, fill_color=fill)
+
+    # Column widths for traveller columns (closer to your reference image)
+    _TRAV_COL_WIDTHS = [28, 30, 12, 10, 6, 10, 10, 10, 10, 8, 8]
     _col_letters = 'GHIJKLMNOPQ'
     for letter, width in zip(_col_letters, _TRAV_COL_WIDTHS):
         ws.column_dimensions[letter].width = width
 
-    # ------------------------------------------------------------------
+    # Compute DD start row: traveller header + traveller rows + 2 blank rows
+    _DD_START_ROW = _TRAV_HEADER_ROW + 1 + len(df_trav) + 2
+    # _DD_START_COL = 7  
+    # G    # ------------------------------------------------------------------
     # 7. Double Dummy table  G6:M10
     # ------------------------------------------------------------------
-    _DD_START_ROW = 6
     _DD_START_COL = 7  # G
 
     dd_valid = per_row.get('dd_valid')
