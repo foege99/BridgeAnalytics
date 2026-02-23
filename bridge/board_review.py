@@ -321,6 +321,172 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     ws.column_dimensions['C'].width = 22
     ws.column_dimensions['E'].width = 25
 
+    # ------------------------------------------------------------------
+    # 6. Mini traveller table  G1:Q2
+    # ------------------------------------------------------------------
+    try:
+        from openpyxl.styles import PatternFill, Border, Side, Alignment
+        _styles_available = True
+    except ImportError:
+        _styles_available = False
+
+    _GRAY_FILL = 'D9D9D9'  # shared fill color for header cells
+
+    _TRAVELLER_HEADERS = [
+        'NS-par', 'ØV-par', 'Kontrakt', 'Udspil', 'Stik',
+        'Score NS', 'Score ØV', 'MP/IMP NS', 'MP/IMP ØV', 'Pct NS', 'Pct ØV',
+    ]
+    # column G = 7  …  Q = 17
+    _TRAV_START_COL = 7
+
+    def _apply_header_style(cell) -> None:
+        if not _styles_available:
+            return
+        cell.font = Font(bold=True) if Font is not None else cell.font
+        cell.fill = PatternFill(fill_type='solid', fgColor=_GRAY_FILL)
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        thin = Side(style='thin')
+        cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def _apply_data_style(cell, align: str = 'center') -> None:
+        if not _styles_available:
+            return
+        thin = Side(style='thin')
+        cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        cell.alignment = Alignment(horizontal=align, vertical='center')
+
+    # Write header row
+    for i, header in enumerate(_TRAVELLER_HEADERS):
+        cell = ws.cell(row=1, column=_TRAV_START_COL + i, value=header)
+        _apply_header_style(cell)
+
+    # Build data row values
+    ns_names = ' / '.join(filter(None, [
+        _get_field(per_row, 'ns1') or '',
+        _get_field(per_row, 'ns2') or '',
+    ]))
+    ov_names = ' / '.join(filter(None, [
+        _get_field(per_row, 'ew1') or '',
+        _get_field(per_row, 'ew2') or '',
+    ]))
+    trav_contract = _get_field(per_row, 'contract')
+    trav_lead = _get_field(per_row, 'lead')
+    trav_tricks = _get_field(per_row, 'tricks')
+    trav_score_ns = _get_field(per_row, 'score_NS', 'score_ns', 'NS_score', 'score')
+    trav_score_ov = _get_field(per_row, 'score_ØV', 'score_ew', 'ØV_score', 'score_EW')
+    trav_mp_ns = _get_field(per_row, 'mp_NS', 'imp_NS', 'mp_ns', 'imp_ns')
+    trav_mp_ov = _get_field(per_row, 'mp_ØV', 'imp_ØV', 'mp_ew', 'imp_ew')
+    trav_pct_ns = _get_field(per_row, 'pct_NS')
+    trav_pct_ov = _get_field(per_row, 'pct_ØV', 'pct_EW', 'pct_ew')
+
+    _TRAV_DATA = [
+        (ns_names,       'left'),
+        (ov_names,       'left'),
+        (trav_contract,  'center'),
+        (trav_lead,      'center'),
+        (trav_tricks,    'right'),
+        (trav_score_ns,  'right'),
+        (trav_score_ov,  'right'),
+        (trav_mp_ns,     'right'),
+        (trav_mp_ov,     'right'),
+        (trav_pct_ns,    'right'),
+        (trav_pct_ov,    'right'),
+    ]
+
+    for i, (value, align) in enumerate(_TRAV_DATA):
+        cell = ws.cell(row=2, column=_TRAV_START_COL + i, value=value)
+        _apply_data_style(cell, align)
+
+    # Column widths for traveller columns
+    _TRAV_COL_WIDTHS = [18, 18, 12, 10, 6, 10, 10, 10, 10, 8, 8]
+    _col_letters = 'GHIJKLMNOPQ'
+    for letter, width in zip(_col_letters, _TRAV_COL_WIDTHS):
+        ws.column_dimensions[letter].width = width
+
+    # ------------------------------------------------------------------
+    # 7. Double Dummy table  G6:M10
+    # ------------------------------------------------------------------
+    _DD_START_ROW = 6
+    _DD_START_COL = 7  # G
+
+    dd_valid = per_row.get('dd_valid')
+    if dd_valid is None or (isinstance(dd_valid, float) and pd.isna(dd_valid)):
+        dd_valid = False
+
+    if not dd_valid:
+        na_cell = ws.cell(row=_DD_START_ROW, column=_DD_START_COL,
+                          value='Double Dummy: ikke tilgængelig')
+        if Font is not None:
+            na_cell.font = Font(italic=True)
+    else:
+        # Title
+        title_cell = ws.cell(row=_DD_START_ROW, column=_DD_START_COL,
+                             value='Double Dummy')
+        if Font is not None:
+            title_cell.font = Font(bold=True)
+
+        _DD_STRAIN_HEADERS = ['NT', '♠', '♥', '♦', '♣', 'HP']
+        _DD_DIRS_ORDER = ['N', 'S', 'Ø', 'V']
+        _DD_STRAIN_KEYS = ['NT', 'S', 'H', 'D', 'C']  # column keys for dd_{dir}_{key}
+
+        thin = Side(style='thin') if _styles_available else None
+
+        def _dd_cell_style(cell, is_header: bool = False,
+                           is_ns: bool = False) -> None:
+            if not _styles_available:
+                return
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            if thin:
+                cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            if is_header and Font is not None:
+                cell.fill = PatternFill(fill_type='solid', fgColor=_GRAY_FILL)
+                cell.font = Font(bold=True)
+            elif is_ns:
+                cell.fill = PatternFill(fill_type='solid', fgColor='EBF1DE')
+
+        # Header row: H6:M6
+        for j, strain_hdr in enumerate(_DD_STRAIN_HEADERS):
+            c = ws.cell(row=_DD_START_ROW, column=_DD_START_COL + 1 + j,
+                        value=strain_hdr)
+            _dd_cell_style(c, is_header=True)
+
+        # Data rows: G7:M10
+        for i, dir_code in enumerate(_DD_DIRS_ORDER):
+            row_num = _DD_START_ROW + 1 + i
+            is_ns = dir_code in ('N', 'S')
+
+            # Row label
+            label_cell = ws.cell(row=row_num, column=_DD_START_COL,
+                                 value=dir_code)
+            _dd_cell_style(label_cell, is_header=True)
+
+            # Strain values
+            for j, strain_key in enumerate(_DD_STRAIN_KEYS):
+                col_name = f'dd_{dir_code}_{strain_key}'
+                val = per_row.get(col_name)
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    try:
+                        val = int(val)
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    val = None
+                dc = ws.cell(row=row_num, column=_DD_START_COL + 1 + j, value=val)
+                _dd_cell_style(dc, is_ns=is_ns)
+
+            # HCP column (M = index 5)
+            hcp_col = f'dd_{dir_code}_HCP'
+            hcp_val = per_row.get(hcp_col)
+            if hcp_val is not None and not (isinstance(hcp_val, float) and pd.isna(hcp_val)):
+                try:
+                    hcp_val = int(hcp_val)
+                except (ValueError, TypeError):
+                    pass
+            else:
+                hcp_val = None
+            hc = ws.cell(row=row_num, column=_DD_START_COL + 6, value=hcp_val)
+            _dd_cell_style(hc, is_ns=is_ns)
+
 
 def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:
     """

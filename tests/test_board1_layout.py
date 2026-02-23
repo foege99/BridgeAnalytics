@@ -369,3 +369,176 @@ def test_right_info_block_fallback_when_missing():
     assert '(ukendt)' in str(ws.cell(row=8, column=5).value)
     assert '(ukendt)' in str(ws.cell(row=9, column=5).value)
 
+
+# ---------------------------------------------------------------------------
+# Tests for mini traveller table (G1:Q2)
+# ---------------------------------------------------------------------------
+
+def test_mini_traveller_headers_at_g1():
+    """Mini traveller header row must be written at G1:Q1."""
+    df = _make_df()
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # Column G = 7; headers span G1..Q1 (11 columns)
+    headers = [ws.cell(row=1, column=7 + i).value for i in range(11)]
+    assert headers[0] == 'NS-par'
+    assert headers[1] == 'ØV-par'
+    assert headers[2] == 'Kontrakt'
+    assert headers[3] == 'Udspil'
+    assert headers[4] == 'Stik'
+    assert headers[5] == 'Score NS'
+    assert headers[6] == 'Score ØV'
+    assert headers[7] == 'MP/IMP NS'
+    assert headers[8] == 'MP/IMP ØV'
+    assert headers[9] == 'Pct NS'
+    assert headers[10] == 'Pct ØV'
+
+
+def test_mini_traveller_data_row_player_names():
+    """Mini traveller data row (row 2) shows combined NS and ØV names."""
+    df = _make_df(contract='4S', lead='♥A', tricks=10, pct_NS=58.3)
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    ns_cell = ws.cell(row=2, column=7).value   # G2 = NS-par
+    ov_cell = ws.cell(row=2, column=8).value   # H2 = ØV-par
+    contract_cell = ws.cell(row=2, column=9).value  # I2 = Kontrakt
+    lead_cell = ws.cell(row=2, column=10).value     # J2 = Udspil
+    tricks_cell = ws.cell(row=2, column=11).value   # K2 = Stik
+    pct_ns_cell = ws.cell(row=2, column=16).value   # P2 = Pct NS
+
+    assert PER in str(ns_cell)
+    assert HENRIK in str(ns_cell)
+    assert 'Opp East' in str(ov_cell)
+    assert 'Opp West' in str(ov_cell)
+    assert contract_cell == '4S'
+    assert lead_cell == '♥A'
+    assert tricks_cell == 10
+    assert pct_ns_cell == 58.3
+
+
+def test_mini_traveller_pct_ov_column():
+    """Pct ØV is read from pct_ØV column and placed at Q2 (column 17)."""
+    df = _make_df(pct_ØV=41.7)
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=2, column=17).value == 41.7
+
+
+def test_mini_traveller_missing_pct_is_none():
+    """When pct columns are absent, the data cells are None."""
+    df = _make_df()  # no pct columns
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=2, column=16).value is None   # Pct NS
+    assert ws.cell(row=2, column=17).value is None   # Pct ØV
+
+
+# ---------------------------------------------------------------------------
+# Tests for Double Dummy table (G6:M10)
+# ---------------------------------------------------------------------------
+
+def _make_df_with_dd(**extra):
+    """Create a DataFrame row with dd_valid=True and representative DD values."""
+    dd_data = {
+        'dd_valid': True,
+        'dd_N_NT': 9, 'dd_N_S': 10, 'dd_N_H': 8, 'dd_N_D': 7, 'dd_N_C': 6, 'dd_N_HCP': 17,
+        'dd_S_NT': 8, 'dd_S_S': 9,  'dd_S_H': 7, 'dd_S_D': 6, 'dd_S_C': 5, 'dd_S_HCP': 10,
+        'dd_Ø_NT': 4, 'dd_Ø_S': 3,  'dd_Ø_H': 5, 'dd_Ø_D': 6, 'dd_Ø_C': 7, 'dd_Ø_HCP': 6,
+        'dd_V_NT': 5, 'dd_V_S': 4,  'dd_V_H': 6, 'dd_V_D': 7, 'dd_V_C': 8, 'dd_V_HCP': 7,
+    }
+    dd_data.update(extra)
+    return _make_df(**dd_data)
+
+
+def test_dd_table_title_when_valid():
+    """Title cell G6 must read 'Double Dummy' when dd_valid is True."""
+    df = _make_df_with_dd()
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=6, column=7).value == 'Double Dummy'
+
+
+def test_dd_table_strain_headers():
+    """Strain headers in H6:M6 must be NT, ♠, ♥, ♦, ♣, HP."""
+    df = _make_df_with_dd()
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    headers = [ws.cell(row=6, column=8 + i).value for i in range(6)]
+    assert headers == ['NT', '♠', '♥', '♦', '♣', 'HP']
+
+
+def test_dd_table_row_labels():
+    """Row labels in G7:G10 must be N, S, Ø, V."""
+    df = _make_df_with_dd()
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    labels = [ws.cell(row=7 + i, column=7).value for i in range(4)]
+    assert labels == ['N', 'S', 'Ø', 'V']
+
+
+def test_dd_table_values_populated():
+    """DD values must be written correctly in H7:L10."""
+    df = _make_df_with_dd()
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # Row 7 = N:  NT=9, ♠=10, ♥=8, ♦=7, ♣=6
+    assert ws.cell(row=7, column=8).value == 9    # dd_N_NT
+    assert ws.cell(row=7, column=9).value == 10   # dd_N_S (♠)
+    assert ws.cell(row=7, column=10).value == 8   # dd_N_H (♥)
+    assert ws.cell(row=7, column=11).value == 7   # dd_N_D (♦)
+    assert ws.cell(row=7, column=12).value == 6   # dd_N_C (♣)
+
+    # Row 9 = Ø:  NT=4
+    assert ws.cell(row=9, column=8).value == 4    # dd_Ø_NT
+
+
+def test_dd_table_hcp_column():
+    """HP column (M = column 13) must contain HCP per direction."""
+    df = _make_df_with_dd()
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=7, column=13).value == 17   # dd_N_HCP
+    assert ws.cell(row=8, column=13).value == 10   # dd_S_HCP
+    assert ws.cell(row=9, column=13).value == 6    # dd_Ø_HCP
+    assert ws.cell(row=10, column=13).value == 7   # dd_V_HCP
+
+
+def test_dd_table_not_available_when_dd_valid_false():
+    """When dd_valid is False, G6 shows 'ikke tilgængelig' message."""
+    df = _make_df(dd_valid=False)
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    msg = str(ws.cell(row=6, column=7).value)
+    assert 'ikke tilgængelig' in msg
+
+
+def test_dd_table_not_available_when_dd_valid_missing():
+    """When dd_valid column is absent, G6 shows 'ikke tilgængelig' message."""
+    df = _make_df()  # no dd_valid column
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    msg = str(ws.cell(row=6, column=7).value)
+    assert 'ikke tilgængelig' in msg
+
