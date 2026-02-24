@@ -74,6 +74,29 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
             cell.font = Font(bold=True)
         return cell
 
+    def _write_with_red_suits(cell, text) -> None:
+        """Write *text* to *cell*; colour any ♥ or ♦ characters red using rich text."""
+        if text is None:
+            cell.value = text
+            return
+        text_str = str(text)
+        if not _rich_text_available or ('♥' not in text_str and '♦' not in text_str):
+            cell.value = text_str
+            return
+        parts = []
+        i = 0
+        while i < len(text_str):
+            if text_str[i] in ('♥', '♦'):
+                parts.append(TextBlock(_RED_FONT, text_str[i]))
+                i += 1
+            else:
+                j = i + 1
+                while j < len(text_str) and text_str[j] not in ('♥', '♦'):
+                    j += 1
+                parts.append(text_str[i:j])
+                i = j
+        cell.value = CellRichText(parts)
+
     def _write_suit_line(cell, line: str) -> None:
         """Write a suit line; colour ♥ and ♦ symbols red when rich text is available."""
         if _rich_text_available and line and line[0] in ('♥', '♦'):
@@ -214,17 +237,13 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     #
     # Layout (columns A=1, B=2, C=3, E=5):
     #   Row 1 : title (B)  |  Turnering (E)
-    #   Row 2 : top player name (B)  |  Board (E)
-    #   Rows 3-6 : top hand suits (B)
-    #   Row 3, E : Dealer
-    #   Row 4, E : Zone
-    #   Row 8 : left name (A)  |  right name (C)  |  Kontrakt (E)
+    #   Row 2 : Board (A)  |  top player name (B)  |  Kontrakt (C)
+    #   Row 3 : Dealer (A)  |  top hand suit 1 (B)  |  Spilfører (C)
+    #   Row 4 : NS HCP (A)  |  top hand suit 2 (B)  |  Udspil (C)  |  Zone (E)
+    #   Row 5 : ØV HCP (A)  |  top hand suit 3 (B)  |  Resultat (C)
+    #   Row 6 : top hand suit 4 (B)
+    #   Row 8 : left name (A)  |  right name (C)
     #   Rows 9-12 : left suits (A)  |  right suits (C)
-    #   Row 9, E : Declarer
-    #   Row 10, E : Udspil
-    #   Row 11, E : Resultat
-    #   Row 12, E : NS HCP
-    #   Row 13, E : ØV HCP
     #   Row 14 : bottom player name (col B)
     #   Rows 15-18 : bottom hand suits (col B)
     # ------------------------------------------------------------------
@@ -233,13 +252,13 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
             value=f"Spil 1 – {latest_date} (sektion {section_val})")
     _bold(ws.cell(row=1, column=2))
 
-    # --- Header block (col E) ---
+    # --- Header block ---
     dealer_val = _get_field(per_row, 'dealer', 'Dealer')
     zone_val = _get_field(per_row, 'vul', 'vulnerability', 'zone', 'Zone')
     zone_display = _VUL_DK.get(zone_val, zone_val) if zone_val is not None else '(ukendt)'
     ws.cell(row=1, column=5, value=f"Turnering: {latest_date}")
-    ws.cell(row=2, column=5, value="Board: 1")
-    ws.cell(row=3, column=5,
+    ws.cell(row=2, column=1, value="Board: 1")
+    ws.cell(row=3, column=1,
             value=f"Dealer: {dealer_val if dealer_val is not None else '(ukendt)'}")
     ws.cell(row=4, column=5, value=f"Zone: {zone_display}")
 
@@ -263,7 +282,7 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     for i, line in enumerate(_hand_suit_lines(dir_to_hand.get(bottom_dir))):
         _write_suit_line(ws.cell(row=15 + i, column=2), line)
 
-    # --- Right-side info block (col E, rows 8-13) ---
+    # --- Info block (A2-A5, C2-C5) ---
     contract_val = _get_field(per_row, 'contract')
     decl_val = _get_field(per_row, 'decl')
     lead_val = _get_field(per_row, 'lead')
@@ -295,12 +314,17 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     ns_hcp = _side_hcp_total('NS_HCP', 'N', 'S')
     ov_hcp = _side_hcp_total('ØV_HCP', 'Ø', 'V')
 
-    ws.cell(row=8,  column=5, value=f"Kontrakt: {contract_val if contract_val is not None else '(ukendt)'}")
-    ws.cell(row=9,  column=5, value=f"Declarer: {decl_val if decl_val is not None else '(ukendt)'}")
-    ws.cell(row=10, column=5, value=f"Udspil: {lead_val if lead_val is not None else '(ukendt)'}")
-    ws.cell(row=11, column=5, value=f"Resultat: {tricks_val if tricks_val is not None else '(ukendt)'}")
-    ws.cell(row=12, column=5, value=f"NS HCP: {ns_hcp if ns_hcp is not None else '(ukendt)'}")
-    ws.cell(row=13, column=5, value=f"ØV HCP: {ov_hcp if ov_hcp is not None else '(ukendt)'}")
+    ws.cell(row=4, column=1, value=f"NS HCP: {ns_hcp if ns_hcp is not None else '(ukendt)'}")
+    ws.cell(row=5, column=1, value=f"ØV HCP: {ov_hcp if ov_hcp is not None else '(ukendt)'}")
+
+    _write_with_red_suits(ws.cell(row=2, column=3),
+                          f"Kontrakt: {contract_val if contract_val is not None else '(ukendt)'}")
+    ws.cell(row=3, column=3,
+            value=f"Spilfører: {decl_val if decl_val is not None else '(ukendt)'}")
+    _write_with_red_suits(ws.cell(row=4, column=3),
+                          f"Udspil: {lead_val if lead_val is not None else '(ukendt)'}")
+    ws.cell(row=5, column=3,
+            value=f"Resultat: {tricks_val if tricks_val is not None else '(ukendt)'}")
 
     # Par (row 14, col E)
     par_score = _get_field(per_row, 'par_score')
@@ -434,7 +458,12 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
             fill = _ZEBRA_FILL
 
         for cidx, (val, align) in enumerate(values_and_align):
-            cell = ws.cell(row=out_row, column=_TRAV_START_COL + cidx, value=val)
+            cell = ws.cell(row=out_row, column=_TRAV_START_COL + cidx)
+            # Contract (index 2) and lead/Udspil (index 3) may contain ♥/♦
+            if cidx in (2, 3):
+                _write_with_red_suits(cell, val)
+            else:
+                cell.value = val
             _apply_data_style(cell, align=align, fill_color=fill)
 
     # Column widths for traveller columns (closer to your reference image)
@@ -488,8 +517,8 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
 
         # Header row: H6:M6
         for j, strain_hdr in enumerate(_DD_STRAIN_HEADERS):
-            c = ws.cell(row=_DD_START_ROW, column=_DD_START_COL + 1 + j,
-                        value=strain_hdr)
+            c = ws.cell(row=_DD_START_ROW, column=_DD_START_COL + 1 + j)
+            _write_with_red_suits(c, strain_hdr)
             _dd_cell_style(c, is_header=True)
 
         # Data rows: G7:M10
