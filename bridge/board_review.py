@@ -336,7 +336,7 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
 
     # Traveller headers (bridge.dk style)
     _TRAVELLER_HEADERS = [
-        'NS', 'ØV', 'Kontrakt', 'Udspil', 'Stik',
+        'NS', 'ØV', 'Kontrakt','Spilfører','Udspil', 'Stik',
         'Score NS', 'Score ØV', 'Point NS', 'Point ØV', 'Pct NS', 'Pct ØV',
     ]
     _TRAV_START_COL = 7  # G
@@ -416,6 +416,7 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
             (ns_txt, 'left'),
             (ew_txt, 'left'),
             (_get_field(r, 'contract'), 'center'),
+            (_get_field(r, 'decl'), 'center'),
             (_get_field(r, 'lead'), 'center'),
             (_get_field(r, 'tricks'), 'right'),
             (_get_field(r, 'score_NS', 'score_ns', 'NS_score', 'score'), 'right'),
@@ -438,8 +439,8 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
             _apply_data_style(cell, align=align, fill_color=fill)
 
     # Column widths for traveller columns (closer to your reference image)
-    _TRAV_COL_WIDTHS = [28, 30, 12, 10, 6, 10, 10, 10, 10, 8, 8]
-    _col_letters = 'GHIJKLMNOPQ'
+    _TRAV_COL_WIDTHS = [28, 30, 10, 10, 10, 6, 10, 10, 10, 10, 8, 8]
+    _col_letters = 'GHIJKLMNOPQR'
     for letter, width in zip(_col_letters, _TRAV_COL_WIDTHS):
         ws.column_dimensions[letter].width = width
 
