@@ -282,11 +282,11 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     dealer_val = _get_field(per_row, 'dealer', 'Dealer')
     zone_val = _get_field(per_row, 'vul', 'vulnerability', 'zone', 'Zone')
     zone_display = _VUL_DK.get(zone_val, zone_val) if zone_val is not None else '(ukendt)'
-    ws.cell(row=1, column=5, value=f"Turnering: {latest_date}")
-    ws.cell(row=2, column=1, value="Board: 1")
+    # ws.cell(row=1, column=5, value=f"Turnering: {latest_date}")
+    # ws.cell(row=2, column=1, value="Spil: 1")
     ws.cell(row=3, column=1,
-            value=f"Dealer: {dealer_val if dealer_val is not None else '(ukendt)'}")
-    ws.cell(row=4, column=5, value=f"Zone: {zone_display}")
+            value=f"Giver: {dealer_val if dealer_val is not None else '(ukendt)'}")
+    ws.cell(row=6, column=1, value=f"Zone: {zone_display}")
 
     # --- Top hand ---
     _bold(ws.cell(row=2, column=2, value=_player_label(top_dir)))
