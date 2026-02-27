@@ -9,7 +9,12 @@ import pytest
 from openpyxl import Workbook
 from unittest.mock import MagicMock
 
-from bridge.board_review import write_board1_layout_sheet, _hand_suit_lines, _ROTATIONS
+from bridge.board_review import (
+    write_board1_layout_sheet,
+    _hand_suit_lines,
+    _ROTATIONS,
+    _both_names_in_df,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -571,4 +576,123 @@ def test_dd_table_not_available_when_dd_valid_missing():
 
     msg = str(ws.cell(row=6, column=7).value)
     assert 'ikke tilgængelig' in msg
+
+
+# ---------------------------------------------------------------------------
+# Tests for fallback tournament selection (Board1_LastTournament)
+# ---------------------------------------------------------------------------
+
+def _make_two_date_df(late_date='2026-02-01', early_date='2026-01-15',
+                      row_section='A', late_ns2='Someone Else'):
+    """Create a two-date DataFrame for fallback testing.
+
+    *late_date* has Per but NOT Henrik (ns2 = late_ns2).
+    *early_date* has both Per (ns1) and Henrik (ns2).
+    Both rows use the same row/section and board_no=1.
+    """
+    late_row = {
+        'tournament_date': late_date,
+        'board_no': 1,
+        'row': row_section,
+        'ns1': PER,
+        'ns2': late_ns2,
+        'ew1': 'Opp East',
+        'ew2': 'Opp West',
+        'N_hand': 'AKT7.QJ3.984.AK2',
+        'S_hand': '652.A75.KQ72.J54',
+        'Ø_hand': 'QJ93.T862.AT.876',
+        'V_hand': '84.K94.J653.QT93',
+    }
+    early_row = {
+        'tournament_date': early_date,
+        'board_no': 1,
+        'row': row_section,
+        'ns1': PER,
+        'ns2': HENRIK,
+        'ew1': 'Opp East',
+        'ew2': 'Opp West',
+        'N_hand': 'AKT7.QJ3.984.AK2',
+        'S_hand': '652.A75.KQ72.J54',
+        'Ø_hand': 'QJ93.T862.AT.876',
+        'V_hand': '84.K94.J653.QT93',
+    }
+    return pd.DataFrame([late_row, early_row])
+
+
+def test_fallback_uses_earlier_date_traveller():
+    """When latest tournament lacks Henrik, traveller uses the earlier date's rows."""
+    df = _make_two_date_df()
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # Traveller data row is at row 2, column 7 (NS-par / G2).
+    # The early date row has both Per and Henrik as NS.
+    ns_cell = str(ws.cell(row=2, column=7).value)
+    assert HENRIK in ns_cell, "Traveller should show earlier date row with Henrik"
+
+
+def test_fallback_note_written_to_sheet():
+    """When fallback is applied, a note is written to row 7, column B."""
+    df = _make_two_date_df(late_date='2026-02-01', early_date='2026-01-15')
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    note = ws.cell(row=7, column=2).value
+    assert note is not None, "Fallback note should be present at row 7, col B"
+    note_str = str(note)
+    assert '2026-02-01' in note_str, "Note should mention the latest (skipped) date"
+    assert '2026-01-15' in note_str, "Note should mention the fallback date"
+
+
+def test_no_fallback_note_when_both_present():
+    """When both names are in the latest tournament, no fallback note is written."""
+    # Latest date has both Per (ns1) and Henrik (ns2)
+    df = _make_df()  # default: ns1=PER, ns2=HENRIK, date='2026-01-15'
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    note = ws.cell(row=7, column=2).value
+    assert note is None, "No fallback note should appear when both players are present"
+
+
+def test_fallback_no_earlier_date_keeps_original():
+    """When no earlier date has both players, the original latest date is used (no crash)."""
+    # Only one date in df, and Henrik is missing → no fallback available
+    df = _make_df(ns1=PER, ns2='Someone Else', ew1='Opp East', ew2='Opp West')
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # Sheet should be created without error
+    assert 'Board1_LastTournament' in wb.sheetnames
+    # No fallback note because no earlier date exists
+    note = ws.cell(row=7, column=2).value
+    assert note is None, "No note when no earlier date with both players exists"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _both_names_in_df helper
+# ---------------------------------------------------------------------------
+
+def test_both_names_found():
+    df = _make_df()  # ns1=PER, ns2=HENRIK
+    assert _both_names_in_df(df, PER, HENRIK) is True
+
+
+def test_both_names_one_missing():
+    df = _make_df(ns2='Someone Else')
+    assert _both_names_in_df(df, PER, HENRIK) is False
+
+
+def test_both_names_strips_whitespace():
+    df = _make_df(ns1=' Per Føge Jensen ', ns2=' Henrik Friis ')
+    assert _both_names_in_df(df, PER, HENRIK) is True
+
+
+def test_both_names_handles_none():
+    df = _make_df(ns1=None, ns2=None, ew1=PER, ew2=HENRIK)
+    assert _both_names_in_df(df, PER, HENRIK) is True
 
