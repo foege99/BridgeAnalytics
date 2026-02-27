@@ -27,6 +27,9 @@ _VUL_DK = {
     'Alle': 'Alle i zonen',
 }
 
+# Target partner name for Board1_LastTournament fallback logic
+_PARTNER_NAME = "Henrik Friis"
+
 
 def _hand_suit_lines(hand_str) -> list:
     """Convert dot-format hand string (S.H.D.C) to 4 suit lines with symbols."""
@@ -38,6 +41,29 @@ def _hand_suit_lines(hand_str) -> list:
             parts.append('-')
     suits = ['♠', '♥', '♦', '♣']
     return [f"{s} {p}" for s, p in zip(suits, parts)]
+
+
+def _both_names_in_df(df_subset: pd.DataFrame, name1: str, name2: str) -> bool:
+    """Return True if both *name1* and *name2* appear (exact strip match) in any player column."""
+    n1 = name1.strip() if name1 else ''
+    n2 = name2.strip() if name2 else ''
+    if not n1 or not n2:
+        return False
+    found1 = found2 = False
+    for col in ('ns1', 'ns2', 'ew1', 'ew2'):
+        if col not in df_subset.columns:
+            continue
+        for val in df_subset[col]:
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                continue
+            s = str(val).strip()
+            if s == n1:
+                found1 = True
+            if s == n2:
+                found2 = True
+            if found1 and found2:
+                return True
+    return False
 
 
 def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
@@ -390,9 +416,50 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     cur_board = per_row.get('board_no')
     cur_section = per_row.get('row', per_row.get('section'))
 
-    df_trav = df_latest.copy()
+    # ------------------------------------------------------------------
+    # Fallback tournament date: if both target names are not present for
+    # cur_date + cur_section, use the most recent earlier date where both
+    # participated (applies only to df_trav – the traveller table).
+    # ------------------------------------------------------------------
+    _trav_date = cur_date
+    _fallback_note = None
     if cur_date is not None:
-        df_trav = df_trav[df_trav['tournament_date'] == cur_date]
+        _section_col = (
+            'row' if 'row' in df.columns
+            else 'section' if 'section' in df.columns
+            else None
+        )
+        if _section_col is not None and cur_section is not None:
+            _df_check = df[
+                (df['tournament_date'] == cur_date) &
+                (df[_section_col] == cur_section)
+            ]
+        else:
+            _df_check = df[df['tournament_date'] == cur_date]
+
+        if not _both_names_in_df(_df_check, per_name, _PARTNER_NAME):
+            _df_sec = (
+                df[df[_section_col] == cur_section]
+                if _section_col is not None and cur_section is not None
+                else df
+            )
+            _other_dates = sorted(
+                (d for d in _df_sec['tournament_date'].unique() if d != cur_date),
+                reverse=True,
+            )
+            for _d in _other_dates:
+                _df_d = _df_sec[_df_sec['tournament_date'] == _d]
+                if _both_names_in_df(_df_d, per_name, _PARTNER_NAME):
+                    _fallback_note = (
+                        f"OBS: Seneste turnering ({cur_date}) inkluderede ikke begge "
+                        f"spillere. Viser sidst spillede turnering fra {_d}."
+                    )
+                    _trav_date = _d
+                    break
+
+    df_trav = df.copy()
+    if _trav_date is not None:
+        df_trav = df_trav[df_trav['tournament_date'] == _trav_date]
     if cur_board is not None and 'board_no' in df_trav.columns:
         df_trav = df_trav[df_trav['board_no'] == cur_board]
     if cur_section is not None and 'row' in df_trav.columns:
@@ -401,6 +468,12 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     # If we still ended with empty (should not happen), fall back to df_b1
     if df_trav.empty:
         df_trav = df_b1.copy()
+
+    # Write fallback note to sheet if applicable (row 7, col B)
+    if _fallback_note is not None:
+        _note_cell = ws.cell(row=7, column=2, value=_fallback_note)
+        if Font is not None:
+            _note_cell.font = Font(italic=True)
 
     # Build traveller rows
     def _pair_text(r, side: str) -> str:
