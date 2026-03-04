@@ -19,18 +19,42 @@ def get_soup(url):
     return BeautifulSoup(r.text, "lxml")
 
 def parse_date_from_title(title):
+    """
+    Parse dato fra turnerings-titel.
+    
+    Håndler flere formater:
+    - DD.MM.YY (fx 03.03.26 → 2026)
+    - DD.MM.YYYY (fx 03.03.2026 → 2026)
+    - DD-MM-YY
+    - DD-MM-YYYY
+    osv.
+    """
     t = clean(title)
-    m = re.search(r"(\d{1,2})[.\-]?(\d{1,2})[.\-]?(\d{2})", t)
-    if not m:
-        return None
-    day = int(m.group(1))
-    month = int(m.group(2))
-    year = int(m.group(3)) + 2000
-    try:
-        return datetime(year, month, day)
-    except:
-        return None
-
+    
+    # Prøv først 4-cifre år (YYYY)
+    m = re.search(r"(\d{1,2})[.\-]?(\d{1,2})[.\-]?(\d{4})", t)
+    if m:
+        day = int(m.group(1))
+        month = int(m.group(2))
+        year = int(m.group(3))
+        try:
+            return datetime(year, month, day)
+        except:
+            return None
+    
+    # Fallback: 2-cifre år (YY) → tilføj 2000
+    m = re.search(r"(\d{1,2})[.\-]?(\d{1,2})[.\-]?(\d{2})(?:\D|$)", t)
+    if m:
+        day = int(m.group(1))
+        month = int(m.group(2))
+        year = int(m.group(3)) + 2000
+        try:
+            return datetime(year, month, day)
+        except:
+            return None
+    
+    return None
+    
 def extract_gt_number(filename):
     """
     Extrahér GT-nummeret fra filnavn.
@@ -86,16 +110,7 @@ def get_recent_tournaments(cutoff_date):
             {
                 'tournament_id': 669,
                 'date': datetime(...),
-                'sections': [
-                    {
-                        'name': 'A',
-                        'filename': 'MT669GT1543.XML',
-                        'gt_number': 1543,
-                        'url': '...resultater.php...',
-                        'spilresultater_url': '...spilresultater.php...&round=1&half=1'
-                    },
-                    ...
-                ]
+                'sections': [...]
             },
             ...
         ]
@@ -113,61 +128,76 @@ def get_recent_tournaments(cutoff_date):
         if "turnering.php?" in a["href"]
     ]
 
+    # ✅ STEP 1: Parse ALLE turneringer først (uden early stop)
     tournaments = {}  # Key: tournament_id, Value: {'date': ..., 'urls': []}
-    reached_cutoff = False  # ✅ Flag for early stopping
 
     for turl in tournament_pages:
         print(f"  Parsing: {turl}")
-        tsoup = get_soup(turl)
-        h1 = tsoup.find("h1")
-        if not h1:
+        try:
+            tsoup = get_soup(turl)
+            h1 = tsoup.find("h1")
+            if not h1:
+                continue
+
+            date = parse_date_from_title(h1.get_text())
+            if not date:
+                continue
+
+            print(f"    → {date.date()}")
+
+            # Find alle XML-links på turnerings-siden
+            for a in tsoup.find_all("a", href=True):
+                if "resultater.php?filename=2183/" in a["href"]:
+                    res_url = urljoin(BASE, a["href"])
+
+                    # Extrahér filnavn
+                    m = re.search(r'filename=2183/([^&]+)', res_url)
+                    if not m:
+                        continue
+
+                    filename = m.group(1)
+                    tournament_id = extract_tournament_id(filename)
+                    gt_number = extract_gt_number(filename)
+
+                    if not tournament_id or not gt_number:
+                        continue
+
+                    # Initialiser turnering hvis ikke eksisterer
+                    if tournament_id not in tournaments:
+                        tournaments[tournament_id] = {
+                            'date': date,
+                            'urls': []
+                        }
+
+                    tournaments[tournament_id]['urls'].append({
+                        'filename': filename,
+                        'gt_number': gt_number,
+                        'url': res_url
+                    })
+        except Exception as e:
+            print(f"    ⚠️ Fejl parsing turnering: {e}")
             continue
 
-        date = parse_date_from_title(h1.get_text())
+    # ✅ STEP 2: Sorter efter dato (NYESTE FØRST)
+    sorted_tournament_ids = sorted(
+        tournaments.keys(),
+        key=lambda tid: tournaments[tid]['date'],
+        reverse=True  # Nyeste først
+    )
 
-        # ✅ CUTOFF-CHECK: Hvis for gammel, mark og stop loop
-        if not date or date.date() < cutoff_date:
-            print(f"    → Skipped (older than {cutoff_date})")
-            reached_cutoff = True
-            break  # ✅ STOP HER
-
-        print(f"    → {date.date()}")
-
-        # Find alle XML-links på turnerings-siden
-        for a in tsoup.find_all("a", href=True):
-            if "resultater.php?filename=2183/" in a["href"]:
-                res_url = urljoin(BASE, a["href"])
-
-                # Extrahér filnavn
-                m = re.search(r'filename=2183/([^&]+)', res_url)
-                if not m:
-                    continue
-
-                filename = m.group(1)
-                tournament_id = extract_tournament_id(filename)
-                gt_number = extract_gt_number(filename)
-
-                if not tournament_id or not gt_number:
-                    continue
-
-                # Initialiser turnering hvis ikke eksisterer
-                if tournament_id not in tournaments:
-                    tournaments[tournament_id] = {
-                        'date': date,
-                        'urls': []
-                    }
-
-                tournaments[tournament_id]['urls'].append({
-                    'filename': filename,
-                    'gt_number': gt_number,
-                    'url': res_url
-                })
-
-    # Konverter til liste med sections sorted efter GT-nummer
+    # ✅ STEP 3: Filtrer efter cutoff (nu kan vi bruge early stop sikkert)
     result = []
-    for tournament_id in sorted(tournaments.keys(), reverse=True):
+    reached_cutoff = False
+
+    for tournament_id in sorted_tournament_ids:
         tdata = tournaments[tournament_id]
         date = tdata['date']
+
+        # ✅ Check cutoff: hvis for gammel, stop
+        if date.date() < cutoff_date:
+            print(f"✅ Early stop: Nåede cutoff-dato ({cutoff_date})")
+            reached_cutoff = True
+            break
 
         # Sort URLs efter GT-nummer (A=1543, B=1544, C=1545...)
         urls_sorted = sorted(tdata['urls'], key=lambda x: x['gt_number'])
@@ -193,20 +223,7 @@ def get_recent_tournaments(cutoff_date):
             'sections': sections
         })
 
-    if reached_cutoff:
-        print(f"✅ Early stop: Nåede cutoff-dato ({cutoff_date})")
+    if not reached_cutoff and tournaments:
+        print(f"✅ Processerede alle turneringer til {cutoff_date}")
 
-    return result
-
-# Backwards compatibility: hvis gammel kode kalder get_recent_tournaments
-# og forventer dict med {url: date}
-def get_recent_tournaments_legacy(cutoff_date):
-    """
-    LEGACY funktion: returner gamle format {url: date}
-    """
-    tournaments = get_recent_tournaments(cutoff_date)
-    result = {}
-    for t in tournaments:
-        for section in t['sections']:
-            result[section['url']] = t['date']
     return result
