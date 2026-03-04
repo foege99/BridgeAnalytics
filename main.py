@@ -39,6 +39,9 @@ from bridge.declarer_analysis import (
     print_declarer_analysis_highlights,
 )
 
+# ✅ IMPORT MVP METRICS
+from bridge.mvp_metrics import add_mvp_metrics
+
 HENRIK = "Henrik Friis"
 PER = "Per Føge Jensen"
 
@@ -289,6 +292,11 @@ def main():
     print("  ✓ Phase 2.1 felt-data beregnet")
     print(f"    - Board Types fundet: {df_all['Board_Type'].value_counts().to_dict()}")
     print(f"    - Split boards (competitive): {df_all['competitive_flag'].sum()}")
+
+    # ✅ TILFØJ MVP METRICS
+    print("Tilføjer MVP analyse-metrikker (melding, spilføring, udspil)...")
+    df_all = add_mvp_metrics(df_all)
+    print("  ✓ MVP metrikker beregnet")
     
     # ✅ BOARD REVIEW ANALYSE (kun A-rækken)
     print("\nGenererer Board Review rapporter (kun A-rækken)...")
@@ -395,7 +403,25 @@ def main():
             df_field_defense.to_excel(writer, sheet_name='Field_Defense', index=False)
         if not df_field_declarer.empty:
             df_field_declarer.to_excel(writer, sheet_name='Field_Declarer', index=False)
-        
+
+        # MVP Metrics (all rows, deduplicated columns)
+        mvp_cols = [
+            "tournament_date", "board", "section",
+            "contract", "level", "strain", "decl",
+            "Combined_HCP", "expected_level_hcp", "level_gap_hcp",
+            "contract_aggression_hcp",
+            "LTC_combined", "expected_tricks_ltc", "contract_required_tricks",
+            "ltc_trick_gap", "ltc_soundness_flag",
+            "slam_attempted", "slam_hcp_ok", "slam_ltc_ok",
+            "dd_tricks_declarer", "play_precision_dd", "contract_hardness_dd",
+            "pct_vs_expected",
+            "lead_suit", "lead_card",
+        ]
+        available_mvp = [c for c in mvp_cols if c in df_all.columns]
+        df_mvp = df_all[available_mvp]
+        df_mvp = df_mvp.loc[:, ~df_mvp.columns.duplicated()]
+        df_mvp.to_excel(writer, sheet_name='MVP_Metrics', index=False)
+
         # Board 1 layout from latest tournament
         write_board1_layout_sheet(writer, df_all, PER)
     
