@@ -27,7 +27,7 @@ _VUL_DK = {
     'Alle': 'Alle i zonen',
 }
 
-# Target partner name for Board1_LastTournament fallback logic
+# Target partner name for last-tournament traveller fallback logic
 _PARTNER_NAME = "Henrik Friis"
 
 
@@ -66,12 +66,23 @@ def _both_names_in_df(df_subset: pd.DataFrame, name1: str, name2: str) -> bool:
     return False
 
 
-def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
+def write_board1_layout_sheet(
+    writer,
+    df: pd.DataFrame,
+    per_name: str,
+    board_no: int = 1,
+    sheet_name: str | None = None,
+) -> None:
     """
-    Write sheet 'Board1_LastTournament' to *writer* (an open pd.ExcelWriter).
+    Write a single board layout sheet to *writer* (an open pd.ExcelWriter).
 
-    Shows board 1 from the latest tournament date present in *df* in a classic
-    bridge table layout, rotated so that *per_name* is always at the bottom.
+    Shows *board_no* from the latest tournament date present in *df* in a
+    classic bridge table layout, rotated so that *per_name* is always at the
+    bottom.
+
+    Defaults preserve legacy behaviour:
+    - board_no=1
+    - sheet_name='Board1_LastTournament'
 
     If the required data is not available the sheet is still created with a
     descriptive message instead of raising an exception.
@@ -89,8 +100,19 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     except ImportError:
         _rich_text_available = False
 
+    try:
+        target_board = int(board_no)
+    except (TypeError, ValueError):
+        target_board = 1
+
     wb = writer.book
-    ws = wb.create_sheet("Board1_LastTournament")
+    if sheet_name is None:
+        sheet_name = (
+            "Board1_LastTournament"
+            if target_board == 1
+            else f"Board{target_board}_LastTournament"
+        )
+    ws = wb.create_sheet(sheet_name)
 
     def _write_msg(msg: str) -> None:
         ws.cell(row=1, column=1, value=msg)
@@ -146,14 +168,16 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
         return
 
     # ------------------------------------------------------------------
-    # 2. Latest tournament date → board 1
+    # 2. Latest tournament date → target board
     # ------------------------------------------------------------------
     latest_date = df['tournament_date'].max()
     df_latest = df[df['tournament_date'] == latest_date]
-    df_b1 = df_latest[df_latest['board_no'] == 1]
+    df_board = df_latest[df_latest['board_no'] == target_board]
 
-    if df_b1.empty:
-        _write_msg(f"Spil 1 ikke fundet for seneste turnering ({latest_date}).")
+    if df_board.empty:
+        _write_msg(
+            f"Spil {target_board} ikke fundet for seneste turnering ({latest_date})."
+        )
         return
 
     # ------------------------------------------------------------------
@@ -162,7 +186,7 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     per_row = None
     per_dir = None
 
-    for _, row in df_b1.iterrows():
+    for _, row in df_board.iterrows():
         for col, dir_code in _PLAYER_COL_TO_DIR.items():
             if row.get(col) == per_name:
                 per_row = row
@@ -173,7 +197,7 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
 
     if per_row is None:
         _write_msg(
-            f"{per_name} ikke fundet i Spil 1 for seneste turnering ({latest_date})."
+            f"{per_name} ikke fundet i Spil {target_board} for seneste turnering ({latest_date})."
         )
         return
 
@@ -275,7 +299,7 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     # ------------------------------------------------------------------
     section_val = per_row.get('row', per_row.get('section', ''))
     ws.cell(row=1, column=2,
-            value=f"Spil 1 – {latest_date} (sektion {section_val})")
+            value=f"Spil {target_board} – {latest_date} (sektion {section_val})")
     _bold(ws.cell(row=1, column=2))
 
     # --- Header block ---
@@ -381,6 +405,7 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
         _styles_available = False
 
     _GRAY_FILL = 'D9D9D9'  # shared fill color for header cells
+    _WHITE_FILL = 'FFFFFF'
     _HILITE_YELLOW = 'FFF2CC'
     _ZEBRA_FILL = 'F7F7F7'
 
@@ -388,6 +413,8 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     _TRAVELLER_HEADERS = [
         'NS', 'ØV', 'Kontrakt', 'Udspil', 'Stik',
         'Score NS', 'Score ØV', 'Point NS', 'Point ØV', 'Pct NS', 'Pct ØV',
+        'Pct Defense', 'Pct Decl',
+        'Lead type',
     ]
     _TRAV_START_COL = 7  # G
     _TRAV_HEADER_ROW = 1
@@ -398,7 +425,7 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
             return
         cell.font = Font(bold=True) if Font is not None else cell.font
         cell.fill = PatternFill(fill_type='solid', fgColor=_GRAY_FILL)
-        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=False)
         thin = Side(style='thin')
         cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
@@ -407,9 +434,10 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
             return
         thin = Side(style='thin')
         cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
-        cell.alignment = Alignment(horizontal=align, vertical='center', wrap_text=True)
-        if fill_color:
-            cell.fill = PatternFill(fill_type='solid', fgColor=fill_color)
+        cell.alignment = Alignment(horizontal=align, vertical='center', wrap_text=False)
+        if Font is not None:
+            cell.font = Font(color='000000')
+        cell.fill = PatternFill(fill_type='solid', fgColor=fill_color if fill_color else _WHITE_FILL)
 
     # Filter to all results for this board/date/section
     cur_date = per_row.get('tournament_date')
@@ -465,9 +493,9 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
     if cur_section is not None and 'row' in df_trav.columns:
         df_trav = df_trav[df_trav['row'] == cur_section]
 
-    # If we still ended with empty (should not happen), fall back to df_b1
+    # If we still ended with empty (should not happen), fall back to df_board
     if df_trav.empty:
-        df_trav = df_b1.copy()
+        df_trav = df_board.copy()
 
     # Write fallback note to sheet if applicable (row 7, col B)
     if _fallback_note is not None:
@@ -492,6 +520,57 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
             b = _get_field(r, 'ew2') or ''
             return " - ".join([p for p in [a, b] if p])
 
+    def _lead_type_text(r) -> str:
+        return _lead_type_text_from_row(r)
+
+    def _pct_or_unknown(val):
+        """Return pct value or 'ukendt' when unavailable."""
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return 'ukendt'
+        return val
+
+    def _to_number_or_none(val):
+        """Try parse a numeric value; return None when unavailable/non-numeric."""
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return None
+        if isinstance(val, (int, float, np.integer, np.floating)):
+            if pd.isna(val):
+                return None
+            return float(val)
+        s = str(val).strip().replace("\xa0", "").replace(" ", "")
+        if not s:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    def _as_excel_number(num):
+        """Return int when whole-number, else float (or None)."""
+        if num is None:
+            return None
+        if float(num).is_integer():
+            return int(num)
+        return float(num)
+
+    def _mirrored_scores(r):
+        """Return (score_ns, score_ov) with one-sided score mirrored when possible."""
+        score_ns_raw = _get_field(r, 'score_NS', 'score_ns', 'NS_score', 'score')
+        score_ov_raw = _get_field(r, 'score_ØV', 'score_ew', 'ØV_score', 'score_EW')
+
+        score_ns_num = _to_number_or_none(score_ns_raw)
+        score_ov_num = _to_number_or_none(score_ov_raw)
+
+        if score_ns_num is None and score_ov_num is not None:
+            score_ns_num = -score_ov_num
+        if score_ov_num is None and score_ns_num is not None:
+            score_ov_num = -score_ns_num
+
+        # Prefer numeric mirrored values when parseable; else keep original text values.
+        score_ns_out = _as_excel_number(score_ns_num) if score_ns_num is not None else score_ns_raw
+        score_ov_out = _as_excel_number(score_ov_num) if score_ov_num is not None else score_ov_raw
+        return score_ns_out, score_ov_out
+
     # Write header
     for i, header in enumerate(_TRAVELLER_HEADERS):
         cell = ws.cell(row=_TRAV_HEADER_ROW, column=_TRAV_START_COL + i, value=header)
@@ -508,6 +587,7 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
 
         ns_txt = _pair_text(r, 'NS')
         ew_txt = _pair_text(r, 'EW')
+        score_ns_val, score_ov_val = _mirrored_scores(r)
 
         values_and_align = [
             (ns_txt, 'left'),
@@ -515,12 +595,15 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
             (_get_field(r, 'contract'), 'center'),
             (_get_field(r, 'lead'), 'center'),
             (_get_field(r, 'tricks'), 'right'),
-            (_get_field(r, 'score_NS', 'score_ns', 'NS_score', 'score'), 'right'),
-            (_get_field(r, 'score_ØV', 'score_ew', 'ØV_score', 'score_EW'), 'right'),
+            (score_ns_val, 'right'),
+            (score_ov_val, 'right'),
             (_get_field(r, 'point_NS', 'mp_NS', 'imp_NS', 'mp_ns', 'imp_ns'), 'right'),
             (_get_field(r, 'point_ØV', 'mp_ØV', 'imp_ØV', 'mp_ew', 'imp_ew'), 'right'),
             (_get_field(r, 'pct_NS', 'pct_ns'), 'right'),
             (_get_field(r, 'pct_ØV', 'pct_EW', 'pct_ew'), 'right'),
+            (_pct_or_unknown(_pct_defense_from_row(r)), 'right'),
+            (_pct_or_unknown(_pct_decl_from_row(r)), 'right'),
+            (_lead_type_text(r), 'left'),
         ]
 
         # Zebra + highlight
@@ -539,11 +622,12 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
                 cell.value = val
             _apply_data_style(cell, align=align, fill_color=fill)
 
-    # Column widths for traveller columns (closer to your reference image)
-    _TRAV_COL_WIDTHS = [28, 30, 12, 10, 6, 10, 10, 10, 10, 8, 8]
-    _col_letters = 'GHIJKLMNOPQ'
+    # Column widths for traveller columns (tuned for reliable header readability)
+    _TRAV_COL_WIDTHS = [28, 30, 12, 10, 6, 12, 12, 10, 10, 8, 8, 11, 11, 28]
+    _col_letters = 'GHIJKLMNOPQRST'
     for letter, width in zip(_col_letters, _TRAV_COL_WIDTHS):
         ws.column_dimensions[letter].width = width
+    ws.row_dimensions[_TRAV_HEADER_ROW].height = 20
 
     # Compute DD start row: traveller header + traveller rows + 2 blank rows
     _DD_START_ROW = _TRAV_HEADER_ROW + 1 + len(df_trav) + 2
@@ -630,6 +714,689 @@ def write_board1_layout_sheet(writer, df: pd.DataFrame, per_name: str) -> None:
                 hcp_val = None
             hc = ws.cell(row=row_num, column=_DD_START_COL + 6, value=hcp_val)
             _dd_cell_style(hc, is_ns=is_ns)
+
+    # ------------------------------------------------------------------
+    # 8. Lead-effekt (pooled A+B+C for current board + tournament)
+    # ------------------------------------------------------------------
+    _dd_end_row = _DD_START_ROW + 4 if dd_valid else _DD_START_ROW
+    _LEAD_START_ROW = _dd_end_row + 2
+    _LEAD_START_COL = 7  # G
+
+    df_lead_pool = df.copy()
+    if cur_date is not None:
+        df_lead_pool = df_lead_pool[df_lead_pool['tournament_date'] == cur_date]
+    if cur_board is not None and 'board_no' in df_lead_pool.columns:
+        df_lead_pool = df_lead_pool[df_lead_pool['board_no'] == cur_board]
+
+    _row_col = (
+        'row' if 'row' in df_lead_pool.columns
+        else 'section' if 'section' in df_lead_pool.columns
+        else None
+    )
+
+    rows_present_txt = 'A+B+C'
+    if _row_col is not None:
+        df_lead_pool = df_lead_pool.copy()
+        df_lead_pool['_row_code'] = df_lead_pool[_row_col].apply(_normalize_row_code)
+        df_lead_pool = df_lead_pool[df_lead_pool['_row_code'].isin(['A', 'B', 'C'])]
+        _rows_present = sorted(df_lead_pool['_row_code'].dropna().unique().tolist())
+        if _rows_present:
+            rows_present_txt = '+'.join(_rows_present)
+
+    total_leads = len(df_lead_pool)
+    df_lead_valid = _filter_valid_leads(df_lead_pool)
+    valid_leads = len(df_lead_valid)
+    lead_summary_rows = _make_lead_effect_summary_rows(df_lead_valid)
+
+    title_cell = ws.cell(
+        row=_LEAD_START_ROW,
+        column=_LEAD_START_COL,
+        value=f"Lead-effekt (pooled {rows_present_txt})",
+    )
+    _bold(title_cell)
+
+    ws.cell(
+        row=_LEAD_START_ROW + 1,
+        column=_LEAD_START_COL,
+        value=f"Gyldige udspil: {valid_leads}/{total_leads}",
+    )
+
+    _LEAD_HEADERS = ['Lead type', 'Antal', 'Avg Pct Defense', 'Avg Pct Decl', 'Avg DD precision', 'Make-rate']
+    _LEAD_HDR_ROW = _LEAD_START_ROW + 2
+    for idx, header in enumerate(_LEAD_HEADERS):
+        c = ws.cell(row=_LEAD_HDR_ROW, column=_LEAD_START_COL + idx, value=header)
+        _apply_header_style(c)
+
+    for ridx, item in enumerate(lead_summary_rows):
+        row_no = _LEAD_HDR_ROW + 1 + ridx
+        values = [
+            item.get('lead_type'),
+            item.get('n'),
+            None if item.get('avg_pct_defense') is None or pd.isna(item.get('avg_pct_defense')) else round(float(item['avg_pct_defense']), 1),
+            None if item.get('avg_pct_decl') is None or pd.isna(item.get('avg_pct_decl')) else round(float(item['avg_pct_decl']), 1),
+            None if item.get('avg_play_precision_dd') is None or pd.isna(item.get('avg_play_precision_dd')) else round(float(item['avg_play_precision_dd']), 2),
+            None if item.get('make_rate') is None or pd.isna(item.get('make_rate')) else round(float(item['make_rate']) * 100.0, 1),
+        ]
+        aligns = ['left', 'right', 'right', 'right', 'right', 'right']
+        for cidx, (val, align) in enumerate(zip(values, aligns)):
+            dc = ws.cell(row=row_no, column=_LEAD_START_COL + cidx, value=val)
+            _apply_data_style(dc, align=align)
+
+    pct_rows = [
+        r for r in lead_summary_rows
+        if r.get('avg_pct_defense') is not None and not pd.isna(r.get('avg_pct_defense'))
+    ]
+    if len(pct_rows) >= 2:
+        best = max(pct_rows, key=lambda x: float(x['avg_pct_defense']))
+        worst = min(pct_rows, key=lambda x: float(x['avg_pct_defense']))
+        msg = (
+            f"Indtryk: bedst {best['lead_type']} ({float(best['avg_pct_defense']):.1f}% defense) | "
+            f"svagest {worst['lead_type']} ({float(worst['avg_pct_defense']):.1f}% defense)"
+        )
+        info_row = _LEAD_HDR_ROW + 1 + len(lead_summary_rows) + 1
+        info_cell = ws.cell(row=info_row, column=_LEAD_START_COL, value=msg)
+        if Font is not None:
+            info_cell.font = Font(italic=True)
+
+
+def write_last_tournament_board_layout_sheets(
+    writer,
+    df: pd.DataFrame,
+    per_name: str,
+    board_start: int = 1,
+    board_end: int = 24,
+) -> None:
+    """
+    Write one layout sheet per board for the latest tournament.
+
+    Default creates sheets for board 1..24 with names:
+    - Board1_LastTournament
+    - Board2_LastTournament
+    - ...
+    - Board24_LastTournament
+    """
+    start = int(board_start)
+    end = int(board_end)
+    if start > end:
+        start, end = end, start
+
+    for board_no in range(start, end + 1):
+        sheet_name = (
+            "Board1_LastTournament"
+            if board_no == 1
+            else f"Board{board_no}_LastTournament"
+        )
+        write_board1_layout_sheet(
+            writer,
+            df,
+            per_name,
+            board_no=board_no,
+            sheet_name=sheet_name,
+        )
+
+
+def _resolve_row_column(df: pd.DataFrame) -> str | None:
+    """Return preferred row/section column name, or None if unavailable."""
+    if 'row' in df.columns:
+        return 'row'
+    if 'section' in df.columns:
+        return 'section'
+    return None
+
+
+def _normalize_row_code(value) -> str | None:
+    """Normalize row code to uppercase string (A/B/C), or None for missing."""
+    if value is None:
+        return None
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    s = str(value).strip().upper()
+    return s if s else None
+
+
+def _normalize_compass(value) -> str | None:
+    """Normalize compass value to N/S/Ø/V (accepts E/W aliases)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    s = str(value).strip().upper()
+    if s == 'E':
+        s = 'Ø'
+    elif s == 'W':
+        s = 'V'
+    return s if s in ('N', 'S', 'Ø', 'V') else None
+
+
+def _declarer_side_from_decl(value) -> str | None:
+    """Return declarer side (NS/ØV) from declarer direction."""
+    d = _normalize_compass(value)
+    if d in ('N', 'S'):
+        return 'NS'
+    if d in ('Ø', 'V'):
+        return 'ØV'
+    return None
+
+
+def _defense_side_from_decl(value) -> str | None:
+    """Return defense side (NS/ØV) from declarer direction."""
+    decl_side = _declarer_side_from_decl(value)
+    if decl_side == 'NS':
+        return 'ØV'
+    if decl_side == 'ØV':
+        return 'NS'
+    return None
+
+
+def _to_float_or_none(value) -> float | None:
+    """Convert value to float when possible, else None."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pct_for_side(row: pd.Series, side: str | None) -> float | None:
+    """Return pct value for given side from a row."""
+    if side == 'NS':
+        return _to_float_or_none(_row_nonnull(row, 'pct_NS', 'pct_ns'))
+    if side == 'ØV':
+        return _to_float_or_none(_row_nonnull(row, 'pct_ØV', 'pct_EW', 'pct_ew'))
+    return None
+
+
+def _pct_defense_from_row(row: pd.Series) -> float | None:
+    """Return pct from defense perspective (leader + partner side)."""
+    return _pct_for_side(row, _defense_side_from_decl(_row_nonnull(row, 'decl')))
+
+
+def _pct_decl_from_row(row: pd.Series) -> float | None:
+    """Return pct from declarer/dummy perspective."""
+    return _pct_for_side(row, _declarer_side_from_decl(_row_nonnull(row, 'decl')))
+
+
+def _lead_bool(value) -> bool | None:
+    """Convert mixed bool-like values to bool/None."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ('true', '1', 'yes', 'ja'):
+            return True
+        if s in ('false', '0', 'no', 'nej'):
+            return False
+    try:
+        return bool(value)
+    except Exception:
+        return None
+
+
+def _row_nonnull(row: pd.Series, *candidates):
+    """Return first non-null candidate value from a pandas row."""
+    for c in candidates:
+        if c not in row.index:
+            continue
+        val = row.get(c)
+        if val is not None and not (isinstance(val, float) and pd.isna(val)):
+            return val
+    return None
+
+
+def _lead_type_text_from_row(row: pd.Series) -> str:
+    """Build textual lead-type description from lead-analysis fields."""
+    strategic = _row_nonnull(row, 'lead_strategic_class')
+    rank_class = _row_nonnull(row, 'lead_rank_class')
+    lead_valid = _lead_bool(_row_nonnull(row, 'lead_valid'))
+    excluded = _lead_bool(_row_nonnull(row, 'exclude_from_lead_stats'))
+
+    strategic_txt = str(strategic).strip() if strategic is not None else ''
+    rank_txt = str(rank_class).strip() if rank_class is not None else ''
+
+    if strategic_txt:
+        if rank_txt and rank_txt.lower() != 'unclear':
+            return f"{strategic_txt} ({rank_txt})"
+        return strategic_txt
+
+    if rank_txt:
+        return rank_txt
+
+    if lead_valid is False or excluded is True:
+        return 'ugyldigt lead'
+
+    return 'ukendt'
+
+
+def _filter_valid_leads(df: pd.DataFrame) -> pd.DataFrame:
+    """Filter to rows considered valid for lead statistics."""
+    if df.empty:
+        return df.copy()
+
+    if 'exclude_from_lead_stats' in df.columns:
+        valid_mask = ~df['exclude_from_lead_stats'].apply(lambda v: _lead_bool(v) is True)
+    elif 'lead_valid' in df.columns:
+        valid_mask = df['lead_valid'].apply(lambda v: _lead_bool(v) is True)
+    elif 'lead' in df.columns:
+        valid_mask = df['lead'].apply(lambda v: v is not None and str(v).strip() != '')
+    else:
+        valid_mask = pd.Series(False, index=df.index)
+
+    return df[valid_mask].copy()
+
+
+def _make_lead_effect_summary_rows(df: pd.DataFrame) -> list[dict]:
+    """Aggregate lead-effect metrics by lead type."""
+    if df.empty:
+        return []
+
+    work = df.copy()
+    work['_lead_type'] = work.apply(_lead_type_text_from_row, axis=1)
+    work['_pct_defense'] = work.apply(_pct_defense_from_row, axis=1)
+    work['_pct_decl'] = work.apply(_pct_decl_from_row, axis=1)
+
+    if 'contract_required_tricks' in work.columns:
+        req = pd.to_numeric(work['contract_required_tricks'], errors='coerce')
+    else:
+        if 'level' in work.columns:
+            level_num = pd.to_numeric(work['level'], errors='coerce')
+        else:
+            level_num = pd.Series(index=work.index, dtype=float)
+        req = level_num + 6
+
+    if 'tricks' in work.columns:
+        tricks_num = pd.to_numeric(work['tricks'], errors='coerce')
+    else:
+        tricks_num = pd.Series(index=work.index, dtype=float)
+
+    made = (tricks_num >= req)
+    made = made.where(~(tricks_num.isna() | req.isna()), other=pd.NA)
+    work['_made_num'] = pd.to_numeric(made, errors='coerce')
+
+    rows = []
+    for lead_type, g in work.groupby('_lead_type', dropna=False):
+        pct_def_series = pd.to_numeric(g['_pct_defense'], errors='coerce')
+        pct_decl_series = pd.to_numeric(g['_pct_decl'], errors='coerce')
+        precision_series = (
+            pd.to_numeric(g['play_precision_dd'], errors='coerce')
+            if 'play_precision_dd' in g.columns
+            else pd.Series(dtype=float)
+        )
+        made_series = pd.to_numeric(g['_made_num'], errors='coerce')
+        if 'board_no' in g.columns:
+            n_boards = int(pd.to_numeric(g['board_no'], errors='coerce').nunique())
+        else:
+            n_boards = 0
+
+        rows.append({
+            'lead_type': str(lead_type) if lead_type is not None else 'ukendt',
+            'n': len(g),
+            'n_boards': n_boards,
+            'avg_pct_defense': pct_def_series.mean() if len(pct_def_series) else None,
+            'avg_pct_decl': pct_decl_series.mean() if len(pct_decl_series) else None,
+            'avg_play_precision_dd': precision_series.mean() if len(precision_series) else None,
+            'make_rate': made_series.mean() if len(made_series) else None,
+        })
+
+    rows.sort(
+        key=lambda x: (
+            float('inf') if x['avg_pct_defense'] is None or pd.isna(x['avg_pct_defense']) else -float(x['avg_pct_defense']),
+            float('inf') if x['make_rate'] is None or pd.isna(x['make_rate']) else -float(x['make_rate']),
+            -(x['n'] if x['n'] is not None else 0),
+            str(x.get('lead_type', '')),
+        )
+    )
+    return rows
+
+
+def make_latest_tournament_lead_effect_allboards(
+    df: pd.DataFrame,
+    rows: tuple[str, ...] = ('A', 'B', 'C'),
+    board_start: int = 1,
+    board_end: int = 24,
+) -> pd.DataFrame:
+    """
+    Build pooled lead-effect table across all checked boards in latest tournament.
+
+    Output is sorted best → worst by `avg_pct_defense` (high to low).
+    """
+    start = int(board_start)
+    end = int(board_end)
+    if start > end:
+        start, end = end, start
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if 'tournament_date' not in df.columns or 'board_no' not in df.columns:
+        return pd.DataFrame()
+
+    latest_date = df['tournament_date'].max()
+    work = df[df['tournament_date'] == latest_date].copy()
+    work['_board_no_int'] = pd.to_numeric(work['board_no'], errors='coerce')
+    work = work[work['_board_no_int'].between(start, end, inclusive='both')].copy()
+
+    target_rows: list[str] = []
+    for r in rows:
+        norm = _normalize_row_code(r)
+        if norm and norm not in target_rows:
+            target_rows.append(norm)
+    if not target_rows:
+        target_rows = ['A', 'B', 'C']
+
+    row_col = _resolve_row_column(work)
+    rows_present_txt = '+'.join(target_rows)
+    if row_col is not None:
+        work['_row_code'] = work[row_col].apply(_normalize_row_code)
+        work = work[work['_row_code'].isin(target_rows)].copy()
+        rows_present = sorted(work['_row_code'].dropna().unique().tolist())
+        if rows_present:
+            rows_present_txt = '+'.join(rows_present)
+
+    total_leads = len(work)
+    valid = _filter_valid_leads(work)
+    valid_leads = len(valid)
+
+    summary_rows = _make_lead_effect_summary_rows(valid)
+    if not summary_rows:
+        return pd.DataFrame()
+
+    out = pd.DataFrame(summary_rows)
+    out.insert(0, 'rank_best_to_worst', range(1, len(out) + 1))
+    out['avg_pct_defense'] = pd.to_numeric(out['avg_pct_defense'], errors='coerce').round(1)
+    out['avg_pct_decl'] = pd.to_numeric(out['avg_pct_decl'], errors='coerce').round(1)
+    out['avg_play_precision_dd'] = pd.to_numeric(out['avg_play_precision_dd'], errors='coerce').round(2)
+    out['make_rate_pct'] = (pd.to_numeric(out['make_rate'], errors='coerce') * 100.0).round(1)
+
+    out['tournament_date'] = latest_date
+    out['rows_pooled'] = rows_present_txt
+    out['board_start'] = start
+    out['board_end'] = end
+    out['valid_leads'] = valid_leads
+    out['total_leads'] = total_leads
+
+    ordered = [
+        'rank_best_to_worst', 'lead_type', 'n', 'n_boards',
+        'avg_pct_defense', 'avg_pct_decl', 'avg_play_precision_dd', 'make_rate_pct',
+        'tournament_date', 'rows_pooled',
+        'board_start', 'board_end', 'valid_leads', 'total_leads',
+    ]
+    return out[[c for c in ordered if c in out.columns]].reset_index(drop=True)
+
+
+def get_latest_tournament_other_rows_results(
+    df: pd.DataFrame,
+    base_row: str = 'A',
+    other_rows: tuple[str, ...] = ('B', 'C'),
+) -> pd.DataFrame:
+    """
+    Return latest-tournament results for rows other than *base_row*.
+
+    Intended for identifying the "other rows" (typically B+C) from the same
+    evening as row A.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if 'tournament_date' not in df.columns:
+        return pd.DataFrame()
+
+    row_col = _resolve_row_column(df)
+    if row_col is None:
+        return pd.DataFrame()
+
+    latest_date = df['tournament_date'].max()
+    out = df[df['tournament_date'] == latest_date].copy()
+
+    out['row_code'] = out[row_col].apply(_normalize_row_code)
+    base = _normalize_row_code(base_row)
+    target_rows = []
+    for row_code in other_rows:
+        norm = _normalize_row_code(row_code)
+        if norm is not None and norm != base and norm not in target_rows:
+            target_rows.append(norm)
+
+    if not target_rows:
+        return pd.DataFrame()
+
+    out = out[out['row_code'].isin(target_rows)].copy()
+
+    preferred_cols = [
+        'tournament_date', 'board_no', 'row_code',
+        'row', 'section',
+        'ns1', 'ns2', 'ew1', 'ew2',
+        'contract', 'decl', 'lead', 'tricks',
+        'score_NS', 'score_ØV', 'pct_NS', 'pct_ØV',
+        'N_hand', 'S_hand', 'Ø_hand', 'V_hand',
+    ]
+    cols = [c for c in preferred_cols if c in out.columns]
+    if not cols:
+        return out.reset_index(drop=True)
+
+    out = out[cols]
+    sort_cols = [c for c in ['row_code', 'board_no'] if c in out.columns]
+    if sort_cols:
+        out = out.sort_values(sort_cols, na_position='last')
+    return out.reset_index(drop=True)
+
+
+def make_latest_tournament_board_consistency_check(
+    df: pd.DataFrame,
+    rows: tuple[str, ...] = ('A', 'B', 'C'),
+    board_start: int = 1,
+    board_end: int = 24,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Check whether boards are identical across rows (A/B/C) in latest tournament.
+
+    Boards are compared via hand-record signature:
+        N_hand | S_hand | Ø_hand | V_hand
+
+    Returns
+    -------
+    tuple[pd.DataFrame, dict]
+        - Per-board consistency report
+        - Summary metrics
+    """
+    start = int(board_start)
+    end = int(board_end)
+    if start > end:
+        start, end = end, start
+
+    target_rows: list[str] = []
+    for r in rows:
+        norm = _normalize_row_code(r)
+        if norm and norm not in target_rows:
+            target_rows.append(norm)
+    if not target_rows:
+        target_rows = ['A', 'B', 'C']
+
+    summary = {
+        'latest_date': None,
+        'row_column': None,
+        'rows_checked': ', '.join(target_rows),
+        'board_start': start,
+        'board_end': end,
+        'boards_checked': max(end - start + 1, 0),
+        'boards_ok': 0,
+        'boards_missing_row': 0,
+        'boards_mismatch': 0,
+        'boards_row_internal_mismatch': 0,
+        'boards_with_all_rows_present': 0,
+        'is_consistent': False,
+        'error': '',
+    }
+
+    report = pd.DataFrame({'board_no': list(range(start, end + 1))})
+
+    if df is None or df.empty:
+        summary['error'] = 'Ingen data tilgængelig.'
+        report['status'] = 'MISSING_ROW'
+        return report, summary
+
+    if 'tournament_date' not in df.columns:
+        summary['error'] = "Kolonnen 'tournament_date' mangler."
+        report['status'] = 'MISSING_ROW'
+        return report, summary
+
+    if 'board_no' not in df.columns:
+        summary['error'] = "Kolonnen 'board_no' mangler."
+        report['status'] = 'MISSING_ROW'
+        return report, summary
+
+    row_col = _resolve_row_column(df)
+    if row_col is None:
+        summary['error'] = "Kolonne 'row' eller 'section' mangler."
+        report['status'] = 'MISSING_ROW'
+        return report, summary
+
+    summary['row_column'] = row_col
+
+    latest_date = df['tournament_date'].max()
+    summary['latest_date'] = latest_date
+
+    latest = df[df['tournament_date'] == latest_date].copy()
+    latest['row_code'] = latest[row_col].apply(_normalize_row_code)
+    latest['_board_no_int'] = pd.to_numeric(latest['board_no'], errors='coerce')
+
+    latest = latest[
+        latest['row_code'].isin(target_rows)
+        & latest['_board_no_int'].between(start, end, inclusive='both')
+    ].copy()
+
+    hand_cols = ['N_hand', 'S_hand', 'Ø_hand', 'V_hand']
+    missing_hand_cols = [c for c in hand_cols if c not in latest.columns]
+    if missing_hand_cols:
+        summary['error'] = f"Manglende hånd-kolonner: {', '.join(missing_hand_cols)}"
+        report['status'] = 'MISSING_HAND_COLS'
+        return report, summary
+
+    # Per-row result counts in latest tournament (within checked board range)
+    counts = latest['row_code'].value_counts().to_dict()
+    for row_code in target_rows:
+        summary[f'{row_code}_result_rows'] = int(counts.get(row_code, 0))
+
+    # Canonical hand signature per result
+    latest['_hand_signature'] = latest[hand_cols].fillna('').astype(str).agg('|'.join, axis=1)
+
+    def _mode_or_first(series: pd.Series):
+        if series.empty:
+            return None
+        mode_vals = series.mode(dropna=False)
+        if not mode_vals.empty:
+            return mode_vals.iloc[0]
+        return series.iloc[0]
+
+    grouped = latest.groupby(['row_code', '_board_no_int'], dropna=False).agg(
+        n_results=('board_no', 'size'),
+        n_unique_signatures=('_hand_signature', 'nunique'),
+        signature=('_hand_signature', _mode_or_first),
+    ).reset_index()
+
+    if not grouped.empty:
+        grouped['_board_no_int'] = grouped['_board_no_int'].astype(int)
+
+    for row_code in target_rows:
+        row_df = grouped[grouped['row_code'] == row_code].set_index('_board_no_int')
+        report[f'{row_code}_n_results'] = report['board_no'].map(row_df['n_results'])
+        report[f'{row_code}_n_unique_signatures'] = report['board_no'].map(row_df['n_unique_signatures'])
+        report[f'{row_code}_signature'] = report['board_no'].map(row_df['signature'])
+        report[f'{row_code}_present'] = (
+            report[f'{row_code}_signature'].notna()
+            & (report[f'{row_code}_signature'].astype(str) != '')
+        )
+        summary[f'{row_code}_boards_present'] = int(report[f'{row_code}_present'].sum())
+
+    base_row = target_rows[0]
+    compare_cols = []
+    for row_code in target_rows[1:]:
+        cmp_col = f'{base_row}_vs_{row_code}_same'
+        compare_cols.append(cmp_col)
+        report[cmp_col] = np.where(
+            report[f'{base_row}_present'] & report[f'{row_code}_present'],
+            report[f'{base_row}_signature'] == report[f'{row_code}_signature'],
+            pd.NA,
+        )
+
+    present_cols = [f'{r}_present' for r in target_rows]
+    report['all_rows_present'] = report[present_cols].all(axis=1)
+
+    if compare_cols:
+        report['all_rows_equal'] = (
+            report['all_rows_present']
+            & report[compare_cols].fillna(False).all(axis=1)
+        )
+    else:
+        report['all_rows_equal'] = report['all_rows_present']
+
+    internal_mismatch = pd.Series(False, index=report.index)
+    for row_code in target_rows:
+        uniq_col = f'{row_code}_n_unique_signatures'
+        internal_mismatch = internal_mismatch | (
+            report[uniq_col].fillna(0).astype(float) > 1
+        )
+
+    report['status'] = 'OK'
+    report.loc[~report['all_rows_present'], 'status'] = 'MISSING_ROW'
+    report.loc[report['all_rows_present'] & internal_mismatch, 'status'] = 'ROW_INTERNAL_MISMATCH'
+    report.loc[
+        report['all_rows_present'] & ~internal_mismatch & ~report['all_rows_equal'],
+        'status'
+    ] = 'MISMATCH'
+
+    summary['boards_with_all_rows_present'] = int(report['all_rows_present'].sum())
+    summary['boards_ok'] = int((report['status'] == 'OK').sum())
+    summary['boards_missing_row'] = int((report['status'] == 'MISSING_ROW').sum())
+    summary['boards_mismatch'] = int((report['status'] == 'MISMATCH').sum())
+    summary['boards_row_internal_mismatch'] = int(
+        (report['status'] == 'ROW_INTERNAL_MISMATCH').sum()
+    )
+    summary['is_consistent'] = (
+        summary['boards_checked'] > 0
+        and summary['boards_ok'] == summary['boards_checked']
+    )
+
+    ordered_cols = ['board_no', 'status', 'all_rows_present', 'all_rows_equal']
+    ordered_cols.extend(compare_cols)
+    for row_code in target_rows:
+        ordered_cols.extend([
+            f'{row_code}_present',
+            f'{row_code}_n_results',
+            f'{row_code}_n_unique_signatures',
+            f'{row_code}_signature',
+        ])
+
+    report = report[[c for c in ordered_cols if c in report.columns]]
+    return report, summary
+
+
+def print_latest_tournament_board_consistency_summary(summary: dict) -> None:
+    """Print readable summary from make_latest_tournament_board_consistency_check()."""
+    print("\n" + "="*70)
+    print("BOARD-KONSISTENS A/B/C (SENESTE TURNERING)")
+    print("="*70)
+
+    if summary.get('error'):
+        print(f"\nFejl: {summary['error']}")
+        print("\n" + "="*70)
+        return
+
+    print(f"\nSeneste turnering: {summary.get('latest_date')}")
+    print(f"Rækker checket: {summary.get('rows_checked')}")
+    print(f"Board-interval: {summary.get('board_start')}–{summary.get('board_end')}")
+    print(f"Boards checket: {summary.get('boards_checked')}")
+    print(f"Boards OK: {summary.get('boards_ok')}")
+    print(f"Boards med manglende række: {summary.get('boards_missing_row')}")
+    print(f"Boards med mismatch: {summary.get('boards_mismatch')}")
+    print(f"Boards med intern række-mismatch: {summary.get('boards_row_internal_mismatch')}")
+
+    rows_checked = [s.strip() for s in str(summary.get('rows_checked', '')).split(',') if s.strip()]
+    if rows_checked:
+        print("\nDækning pr. række:")
+        for row_code in rows_checked:
+            result_rows = summary.get(f'{row_code}_result_rows', 0)
+            boards_present = summary.get(f'{row_code}_boards_present', 0)
+            print(f"  {row_code}: {result_rows} resultatrækker, {boards_present} boards med hand-record")
+
+    verdict = "JA" if summary.get('is_consistent') else "NEJ"
+    print(f"\nEr boards ens på tværs af rækkerne? {verdict}")
+    print("\n" + "="*70)
 
 
 def make_board_review_all_hands(df: pd.DataFrame) -> pd.DataFrame:

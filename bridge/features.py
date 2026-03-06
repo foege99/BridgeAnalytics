@@ -28,6 +28,7 @@ from typing import Optional
 import pandas as pd
 
 from bridge.hand_eval import evaluate_hand
+from bridge.lead_analysis import add_lead_analysis_features
 
 
 def _safe_eval(dot_hand: object) -> dict:
@@ -204,5 +205,7 @@ def add_hand_features(df: pd.DataFrame) -> pd.DataFrame:
 
     derived = out.apply(_calc_row, axis=1)
     out = pd.concat([out, derived], axis=1)
+
+    out = add_lead_analysis_features(out)
 
     return out

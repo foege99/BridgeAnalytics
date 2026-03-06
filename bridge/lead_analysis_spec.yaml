@@ -1,0 +1,68 @@
+lead_analysis_spec:
+
+  validate_lead:
+    rules:
+      - lead_card must exist in leader_hand
+      - lead_card must match lead_suit
+    if_invalid:
+      lead_valid: false
+      exclude_from_lead_stats: true
+
+  detect_rank_structure:
+    priority:
+      - singleton
+      - doubleton_top
+      - sequence
+      - interior_sequence
+      - length_lead
+    classes:
+      - singleton
+      - doubleton_top
+      - top_of_sequence
+      - interior_sequence
+      - 4th_highest
+      - 2nd_highest
+      - 3rd_5th
+      - top_of_nothing
+      - unclear
+
+  strategic_lead_types:
+    - partner_suit_candidate
+    - trump_lead
+    - passive_lead
+    - attacking_lead
+    - short_suit_lead
+    - standard_long_suit_lead
+    - sequence_lead
+    - unclear
+
+  partner_suit_detection:
+    leader_length_max: 3
+    partner_length_min: 5
+    partner_hcp_min: 8
+    partner_honor_required: true
+
+  player_profile:
+
+    notrump_long_suit:
+      with_honor: 4th_highest
+      without_honor: 2nd_highest
+
+    suit_contract_attitude:
+      with_honor: low_card
+      without_honor: high_card
+
+    trump_leads:
+      describe_only:
+        - 2nd_highest
+        - 4th_highest
+        - 3rd_5th
+
+  output_fields:
+    - lead_valid
+    - lead_rank_class
+    - lead_strategic_class
+    - partner_suit_candidate
+    - trump_lead
+    - lead_profile_match
+    - exclude_from_lead_stats

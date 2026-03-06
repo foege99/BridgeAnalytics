@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 from bridge.board_review import (
     write_board1_layout_sheet,
+    write_last_tournament_board_layout_sheets,
     _hand_suit_lines,
     _ROTATIONS,
     _both_names_in_df,
@@ -121,6 +122,186 @@ def test_sheet_created():
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, _make_df(), PER)
     assert 'Board1_LastTournament' in wb.sheetnames
+
+
+def test_custom_board_number_sheet_created_and_titled():
+    """Function can render other boards than board 1 via board_no argument."""
+    df = _make_df(board_no=2)
+    writer, wb = _make_writer_mock()
+
+    write_board1_layout_sheet(writer, df, PER, board_no=2, sheet_name='Board2_LastTournament')
+
+    assert 'Board2_LastTournament' in wb.sheetnames
+    ws = wb['Board2_LastTournament']
+    title = str(ws.cell(row=1, column=2).value)
+    assert 'Spil 2' in title
+
+
+def test_wrapper_writes_multiple_board_tabs_1_to_3():
+    """Wrapper should create one sheet per board, including message sheet for missing boards."""
+    df_b1 = _make_df(board_no=1)
+    df_b2 = _make_df(board_no=2)
+    df = pd.concat([df_b1, df_b2], ignore_index=True)
+
+    writer, wb = _make_writer_mock()
+    write_last_tournament_board_layout_sheets(writer, df, PER, board_start=1, board_end=3)
+
+    assert 'Board1_LastTournament' in wb.sheetnames
+    assert 'Board2_LastTournament' in wb.sheetnames
+    assert 'Board3_LastTournament' in wb.sheetnames
+
+    ws_missing = wb['Board3_LastTournament']
+    msg = str(ws_missing.cell(row=1, column=1).value)
+    assert 'Spil 3' in msg
+
+
+def test_traveller_has_lead_type_last_column():
+    """Traveller table must include a final 'Lead type' column."""
+    df = _make_df(
+        decl='N',
+        lead='♠K',
+        lead_valid=True,
+        exclude_from_lead_stats=False,
+        lead_strategic_class='sequence_lead',
+        lead_rank_class='top_of_sequence',
+        pct_NS=41.0,
+        pct_ØV=59.0,
+    )
+    writer, wb = _make_writer_mock()
+
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=1, column=20).value == 'Lead type'  # T1
+    assert ws.cell(row=1, column=18).value == 'Pct Defense'  # R1
+    assert ws.cell(row=1, column=19).value == 'Pct Decl'     # S1
+    assert ws.cell(row=2, column=18).value == 59.0           # defense side (ØV)
+    assert ws.cell(row=2, column=19).value == 41.0           # declarer side (NS)
+    lead_type = str(ws.cell(row=2, column=20).value)         # T2
+    assert 'sequence_lead' in lead_type
+
+
+def test_traveller_mirrors_missing_score_side():
+    """If only one score side is present, the opposite side is mirrored with opposite sign."""
+    df = _make_df(
+        score_NS=420,
+        score_ØV=None,
+        point_NS=7,
+        point_ØV=3,
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # L2/M2 = Score NS / Score ØV
+    assert ws.cell(row=2, column=12).value == 420
+    assert ws.cell(row=2, column=13).value == -420
+
+
+def test_pooled_lead_effect_section_written_under_board():
+    """A pooled lead-effect section (A+B+C) should be written below DD table."""
+    df_a = _make_df(
+        row='A', section='A',
+        decl='N',
+        lead='♠K', level=4, tricks=10, pct_NS=40.0, pct_ØV=60.0,
+        lead_valid=True, exclude_from_lead_stats=False,
+        lead_strategic_class='sequence_lead', lead_rank_class='top_of_sequence',
+        contract_required_tricks=10,
+    )
+    df_b = _make_df(
+        row='B', section='B',
+        ns1='B NS1', ns2='B NS2', ew1='B EW1', ew2='B EW2',
+        decl='N',
+        lead='♣7', level=4, tricks=9, pct_NS=53.0, pct_ØV=47.0,
+        lead_valid=True, exclude_from_lead_stats=False,
+        lead_strategic_class='partner_suit_candidate', lead_rank_class='2nd_highest',
+        contract_required_tricks=10,
+    )
+    df_c = _make_df(
+        row='C', section='C',
+        ns1='C NS1', ns2='C NS2', ew1='C EW1', ew2='C EW2',
+        decl='N',
+        lead='♥8', level=4, tricks=8, pct_NS=58.0, pct_ØV=42.0,
+        lead_valid=True, exclude_from_lead_stats=False,
+        lead_strategic_class='trump_lead', lead_rank_class='3rd_5th',
+        contract_required_tricks=10,
+    )
+    df = pd.concat([df_a, df_b, df_c], ignore_index=True)
+
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    title_rows = [
+        r for r in range(1, 120)
+        if str(ws.cell(row=r, column=7).value or '').startswith('Lead-effekt (pooled')
+    ]
+    assert title_rows, "Expected pooled lead-effect title in column G"
+
+    title_row = title_rows[0]
+    assert 'A+B+C' in str(ws.cell(row=title_row, column=7).value)
+    assert ws.cell(row=title_row + 2, column=7).value == 'Lead type'
+
+    lead_types = [
+        str(ws.cell(row=r, column=7).value)
+        for r in range(title_row + 3, title_row + 12)
+        if ws.cell(row=r, column=7).value is not None
+    ]
+    assert any('sequence_lead' in s for s in lead_types)
+
+
+def test_pooled_lead_effect_sorted_best_to_worst_even_if_count_lower():
+    """Lead-effect table under board must rank by performance (best->worst), not frequency."""
+    # Best type appears once with high pct
+    df_best = _make_df(
+        row='A', section='A',
+        decl='N',
+        lead='♠K', level=4, tricks=10, pct_NS=30.0, pct_ØV=70.0,
+        lead_valid=True, exclude_from_lead_stats=False,
+        lead_strategic_class='best_type', lead_rank_class='unclear',
+        contract_required_tricks=10,
+    )
+
+    # Worse type appears three times with lower pct
+    df_w1 = _make_df(
+        row='B', section='B', ns1='B1', ns2='B2', ew1='B3', ew2='B4',
+        decl='N',
+        lead='♣7', level=4, tricks=9, pct_NS=58.0, pct_ØV=42.0,
+        lead_valid=True, exclude_from_lead_stats=False,
+        lead_strategic_class='worse_type', lead_rank_class='unclear',
+        contract_required_tricks=10,
+    )
+    df_w2 = _make_df(
+        row='C', section='C', ns1='C1', ns2='C2', ew1='C3', ew2='C4',
+        decl='N',
+        lead='♣7', level=4, tricks=9, pct_NS=56.0, pct_ØV=44.0,
+        lead_valid=True, exclude_from_lead_stats=False,
+        lead_strategic_class='worse_type', lead_rank_class='unclear',
+        contract_required_tricks=10,
+    )
+    df_w3 = _make_df(
+        row='A', section='A', ns1='A3', ns2='A4', ew1='A5', ew2='A6',
+        decl='N',
+        lead='♣7', level=4, tricks=9, pct_NS=59.0, pct_ØV=41.0,
+        lead_valid=True, exclude_from_lead_stats=False,
+        lead_strategic_class='worse_type', lead_rank_class='unclear',
+        contract_required_tricks=10,
+    )
+
+    df = pd.concat([df_best, df_w1, df_w2, df_w3], ignore_index=True)
+
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    title_row = next(
+        r for r in range(1, 180)
+        if str(ws.cell(row=r, column=7).value or '').startswith('Lead-effekt (pooled')
+    )
+
+    # First data row is title+3 (header at title+2)
+    first_lead_type = str(ws.cell(row=title_row + 3, column=7).value)
+    assert 'best_type' in first_lead_type
 
 
 def test_per_at_bottom_when_north():
@@ -406,44 +587,49 @@ def test_right_info_block_fallback_when_missing():
 
 
 # ---------------------------------------------------------------------------
-# Tests for mini traveller table (G1:Q2)
+# Tests for mini traveller table (G1:T2)
 # ---------------------------------------------------------------------------
 
 def test_mini_traveller_headers_at_g1():
-    """Mini traveller header row must be written at G1:Q1."""
+    """Mini traveller header row must be written at G1:T1."""
     df = _make_df()
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    # Column G = 7; headers span G1..Q1 (11 columns)
-    headers = [ws.cell(row=1, column=7 + i).value for i in range(11)]
-    assert headers[0] == 'NS-par'
-    assert headers[1] == 'ØV-par'
+    # Column G = 7; headers span G1..T1 (14 columns)
+    headers = [ws.cell(row=1, column=7 + i).value for i in range(14)]
+    assert headers[0] == 'NS'
+    assert headers[1] == 'ØV'
     assert headers[2] == 'Kontrakt'
     assert headers[3] == 'Udspil'
     assert headers[4] == 'Stik'
     assert headers[5] == 'Score NS'
     assert headers[6] == 'Score ØV'
-    assert headers[7] == 'MP/IMP NS'
-    assert headers[8] == 'MP/IMP ØV'
+    assert headers[7] == 'Point NS'
+    assert headers[8] == 'Point ØV'
     assert headers[9] == 'Pct NS'
     assert headers[10] == 'Pct ØV'
+    assert headers[11] == 'Pct Defense'
+    assert headers[12] == 'Pct Decl'
+    assert headers[13] == 'Lead type'
 
 
 def test_mini_traveller_data_row_player_names():
     """Mini traveller data row (row 2) shows combined NS and ØV names."""
-    df = _make_df(contract='4S', lead='♥A', tricks=10, pct_NS=58.3)
+    df = _make_df(contract='4S', lead='♥A', tricks=10, pct_NS=58.3, pct_ØV=41.7, decl='N')
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    ns_cell = ws.cell(row=2, column=7).value   # G2 = NS-par
-    ov_cell = ws.cell(row=2, column=8).value   # H2 = ØV-par
+    ns_cell = ws.cell(row=2, column=7).value   # G2 = NS
+    ov_cell = ws.cell(row=2, column=8).value   # H2 = ØV
     contract_cell = ws.cell(row=2, column=9).value  # I2 = Kontrakt
     lead_cell = ws.cell(row=2, column=10).value     # J2 = Udspil
     tricks_cell = ws.cell(row=2, column=11).value   # K2 = Stik
     pct_ns_cell = ws.cell(row=2, column=16).value   # P2 = Pct NS
+    pct_def_cell = ws.cell(row=2, column=18).value  # R2 = Pct Defense
+    pct_decl_cell = ws.cell(row=2, column=19).value # S2 = Pct Decl
 
     assert PER in str(ns_cell)
     assert HENRIK in str(ns_cell)
@@ -453,6 +639,8 @@ def test_mini_traveller_data_row_player_names():
     assert str(lead_cell) == '♥A'
     assert tricks_cell == 10
     assert pct_ns_cell == 58.3
+    assert pct_def_cell == 41.7
+    assert pct_decl_cell == 58.3
 
 
 def test_mini_traveller_pct_ov_column():
@@ -474,6 +662,8 @@ def test_mini_traveller_missing_pct_is_none():
 
     assert ws.cell(row=2, column=16).value is None   # Pct NS
     assert ws.cell(row=2, column=17).value is None   # Pct ØV
+    assert ws.cell(row=2, column=18).value == 'ukendt'   # Pct Defense
+    assert ws.cell(row=2, column=19).value == 'ukendt'   # Pct Decl
 
 
 # ---------------------------------------------------------------------------

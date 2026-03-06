@@ -1,5 +1,6 @@
 import sys
 import argparse
+import shutil
 from datetime import datetime, timedelta
 import pandas as pd
 
@@ -28,8 +29,12 @@ from bridge.board_review import (
     make_board_review_all_hands,
     make_board_review_summary,
     board_review_statistics,
+    make_latest_tournament_lead_effect_allboards,
     print_board_review_stats,
-    write_board1_layout_sheet,
+    get_latest_tournament_other_rows_results,
+    make_latest_tournament_board_consistency_check,
+    print_latest_tournament_board_consistency_summary,
+    write_last_tournament_board_layout_sheets,
 )
 
 # ✅ IMPORT DECLARER ANALYSIS
@@ -47,6 +52,7 @@ PER = "Per Føge Jensen"
 
 # Use unique filename to avoid Windows file-lock issues
 OUTPUT_FILE = f"Henrik_Per_ANALYSE_{datetime.now():%Y%m%d_%H%M}.xlsx"
+LATEST_OUTPUT_FILE = "Henrik_Per_ANALYSE_latest.xlsx"
 
 
 def parse_arguments():
@@ -282,6 +288,24 @@ def main():
     print(f"\n✓ I alt {len(df_all)} rækker fra {len(tournaments_in_range)} turneringer")
     print(f"  Sections: {df_all['section'].unique().tolist()}")
     print(f"  Scraped: {tournaments_scraped}, fra Cache: {len(tournaments_to_use_cache)}")
+
+    # ✅ IDENTIFICER B/C RESULTATER + CHECK BOARD-KONSISTENS A/B/C
+    print("\nChecker board-konsistens på tværs af rækker A/B/C (seneste turnering)...")
+    df_other_rows_latest = get_latest_tournament_other_rows_results(
+        df_all,
+        base_row='A',
+        other_rows=('B', 'C'),
+    )
+    df_board_abc_check, board_abc_summary = make_latest_tournament_board_consistency_check(
+        df_all,
+        rows=('A', 'B', 'C'),
+        board_start=1,
+        board_end=24,
+    )
+    print_latest_tournament_board_consistency_summary(board_abc_summary)
+    print(f"  ✓ Resultater i andre rækker (B+C): {len(df_other_rows_latest)}")
+
+    df_board_abc_summary = pd.DataFrame([board_abc_summary])
     
     print("\nTilføjer hånd-features...")
     df_all = add_hand_features(df_all)
@@ -297,6 +321,16 @@ def main():
     print("Tilføjer MVP analyse-metrikker (melding, spilføring, udspil)...")
     df_all = add_mvp_metrics(df_all)
     print("  ✓ MVP metrikker beregnet")
+
+    # ✅ LEAD-EFFEKT PÅ TVÆRS AF ALLE BOARDS (A+B+C)
+    print("Genererer pooled lead-effekt (A+B+C, board 1-24)...")
+    df_lead_effect_allboards = make_latest_tournament_lead_effect_allboards(
+        df_all,
+        rows=('A', 'B', 'C'),
+        board_start=1,
+        board_end=24,
+    )
+    print(f"  ✓ Lead effect rows: {len(df_lead_effect_allboards)}")
     
     # ✅ BOARD REVIEW ANALYSE (kun A-rækken)
     print("\nGenererer Board Review rapporter (kun A-rækken)...")
@@ -378,6 +412,22 @@ def main():
     # ✅ SKRIV EXCEL
     print(f"\nSkriver Excel: {OUTPUT_FILE}")
     with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
+        # A/B/C board consistency + other-row results (latest tournament)
+        if not df_board_abc_check.empty:
+            df_board_abc_check.to_excel(writer, sheet_name='Board_ABC_Check', index=False)
+        if not df_board_abc_summary.empty:
+            df_board_abc_summary.to_excel(writer, sheet_name='Board_ABC_Summary', index=False)
+        if not df_other_rows_latest.empty:
+            df_other_rows_latest.to_excel(writer, sheet_name='Rows_BC_Results', index=False)
+
+        # Lead effect pooled across all boards (best -> worst)
+        if not df_lead_effect_allboards.empty:
+            df_lead_effect_allboards.to_excel(writer, sheet_name='Lead_Effect_AllBoards', index=False)
+        else:
+            pd.DataFrame([
+                {'message': 'Ingen gyldige lead-data fundet for seneste turnering (A+B+C, board 1-24).'}
+            ]).to_excel(writer, sheet_name='Lead_Effect_AllBoards', index=False)
+
         # Board Review
         df_board_review_all.to_excel(writer, sheet_name='Board_Review_All', index=False)
         df_board_review_summary.to_excel(writer, sheet_name='Board_Review_Summary', index=False)
@@ -422,10 +472,27 @@ def main():
         df_mvp = df_mvp.loc[:, ~df_mvp.columns.duplicated()]
         df_mvp.to_excel(writer, sheet_name='MVP_Metrics', index=False)
 
-        # Board 1 layout from latest tournament
-        write_board1_layout_sheet(writer, df_all, PER)
-    
-    print(f"✅ Analyse færdig! Output: {OUTPUT_FILE}")
+        # Board layouts (1-24) from latest tournament
+        write_last_tournament_board_layout_sheets(writer, df_all, PER, board_start=1, board_end=24)
+
+    latest_copy_ok = False
+    try:
+        shutil.copy2(OUTPUT_FILE, LATEST_OUTPUT_FILE)
+        latest_copy_ok = True
+        print(f"↪ Fast kopi opdateret: {LATEST_OUTPUT_FILE}")
+    except PermissionError:
+        print(
+            f"⚠ Kunne ikke opdatere {LATEST_OUTPUT_FILE} (filen er sandsynligvis åben i Excel). "
+            "Luk filen og kør igen."
+        )
+    except OSError as exc:
+        print(f"⚠ Kunne ikke opdatere fast kopi: {exc}")
+
+    latest_status = "opdateret" if latest_copy_ok else "ikke opdateret"
+    print(
+        f"✅ Analyse færdig! Output: {OUTPUT_FILE} | "
+        f"Fast kopi: {LATEST_OUTPUT_FILE} ({latest_status})"
+    )
     
     # ==================== SHOW CACHE STATUS ====================
     cache.print_cache_status()
