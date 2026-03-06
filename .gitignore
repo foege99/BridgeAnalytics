@@ -2,3 +2,11 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+
+# Generated analysis outputs
+Henrik_Per_ANALYSE_*.xlsx
+Henrik_Per_ANALYSE_latest.xlsx
+backups/Henrik_Per_ANALYSE_*.xlsx
+
+# Temporary Excel lock files
+~$*.xlsx
