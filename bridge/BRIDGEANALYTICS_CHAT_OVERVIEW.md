@@ -2,7 +2,7 @@
 
 **Dato:** 2026-03-07  
 **Formål:** Hurtig onboarding i nye chats i Copilot med fokus på arkitektur, risici, refaktor og testforbedringer.  
-**Status:** Foreløbig (ikke fuld linje-for-linje kodeaudit endnu).
+**Status:** Foreløbig, men opdateret med bekræftede ændringer pr. 2026-03-07 (ikke fuld linje-for-linje kodeaudit endnu).
 
 ---
 
@@ -11,10 +11,24 @@
 Dette dokument er baseret på:
 
 - Filinventar fra projektet (`bridge/` og `tests/`)
-- Kendt indhold i:
-  - `bridge/lead_analysis_spec.yaml`
+- Bekræftede kodeændringer i:
+   - `bridge/board_review.py`
+   - `bridge/lead_analysis.py`
+   - `bridge/lead_analysis_spec.yaml`
+   - `bridge/data_cache.py`
+   - `main.py`
 
 > Bemærk: Overblikket er midlertidigt, indtil alle centrale `.py`-filer er gennemgået i detaljer.
+
+### Siden Sidst (Bekræftede Ændringer 2026-03-07)
+
+- Board-sheet layout: Traveller, DD og Lead-effekt er flyttet fra kolonne `G` til `D`.
+- Traveller/lead-tabeller: kolonner for `Spilfører`/`Udspiller` og `Udspil` er tydeliggjort og testet.
+- DD-præsentation: titel er grå header; række-labels holdes grå, mens relevante datafelter kan highlightes gule.
+- Lead-highlight: kræver nu både match på konkret udspil og kontrakt-farve (ikke kun lead-værdi).
+- Lead-analyse-spec: nøgle-navn justeret til `trump_contract_leads`; `3rd_5th`-fortolkning rettet.
+- Main/cache: offline fallback ved netværksfejl forbedret med cache-baseret turneringslæsning.
+- Teststatus for disse flows er valideret via målrettede tests (`python -m pytest ...`) og workbook-checks.
 
 ---
 
@@ -174,4 +188,5 @@ Start med at liste hvilke filer du faktisk har læst.
 ## 8) Opdateringslog
 
 - **2026-03-07:** Første midlertidige version oprettet.
-- Næste opdatering: efter fuld gennemgang af centrale `.py`-filer.
+- **2026-03-07:** Dokument opdateret med bekræftede layout-/lead-/cache-ændringer efter implementering og test.
+- Næste opdatering: efter fuld gennemgang af centrale `.py`-filer (`analysis.py`, `features.py`, `declarer_analysis.py`).
