@@ -1,14 +1,14 @@
 {
   "version": "1.0",
-  "last_sync": "2026-02-22T20:33:32.555824",
+  "last_sync": "2026-03-04T22:03:29.895755",
   "default_cutoff_days": 7,
   "lock_period_hours": 48,
   "tournaments": {
     "669": {
       "tournament_id": 669,
       "date": "2026-02-17",
-      "days_old": 5,
-      "cached_at": "2026-02-22T20:19:26.443350",
+      "days_old": 15,
+      "cached_at": "2026-03-04T21:03:56.510250",
       "sections": [
         "A",
         "B",
@@ -21,8 +21,8 @@
     "665": {
       "tournament_id": 665,
       "date": "2026-02-03",
-      "days_old": 19,
-      "cached_at": "2026-02-22T20:33:14.442666",
+      "days_old": 29,
+      "cached_at": "2026-03-04T21:04:00.193671",
       "sections": [
         "A",
         "B",
@@ -87,6 +87,34 @@
       "hand_count": 432,
       "status": "complete",
       "is_locked": true
+    },
+    "673": {
+      "tournament_id": 673,
+      "date": "2026-02-24",
+      "days_old": 8,
+      "cached_at": "2026-03-04T21:03:52.459704",
+      "sections": [
+        "A",
+        "B",
+        "C"
+      ],
+      "hand_count": 384,
+      "status": "complete",
+      "is_locked": true
+    },
+    "677": {
+      "tournament_id": 677,
+      "date": "2026-03-03",
+      "days_old": 1,
+      "cached_at": "2026-03-04T22:03:29.895755",
+      "sections": [
+        "A",
+        "B",
+        "C"
+      ],
+      "hand_count": 384,
+      "status": "complete",
+      "is_locked": false
     }
   }
 }

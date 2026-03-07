@@ -360,10 +360,12 @@ def add_mvp_metrics(df: pd.DataFrame) -> pd.DataFrame:
         req = row.get("contract_required_tricks")
         if dd is None or req is None:
             return None
+        if isinstance(dd, float) and math.isnan(dd):  # ← TILFØJ DENNE
+            return None
         if isinstance(req, float) and math.isnan(req):
             return None
         return int(dd) - int(req)
-
+        
     out["contract_hardness_dd"] = out.apply(_contract_hardness_dd, axis=1)
 
     # ------------------------------------------------------------------

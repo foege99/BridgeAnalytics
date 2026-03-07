@@ -52,10 +52,9 @@ lead_analysis_spec:
       with_honor: low_card
       without_honor: high_card
 
-    trump_leads:
+    trump_contract_leads:
+      side_suit_only: true
       describe_only:
-        - 2nd_highest
-        - 4th_highest
         - 3rd_5th
 
   output_fields:

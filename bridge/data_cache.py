@@ -181,6 +181,55 @@ class DataCache:
         except Exception as e:
             print(f"Fejl ved laesning af tournament {tournament_id}: {e}")
             return None
+
+    def get_cached_tournaments_in_range(
+        self,
+        start_date,
+        end_date,
+    ) -> List[Dict]:
+        """Return cached tournaments in [start_date, end_date], newest first."""
+        if isinstance(start_date, datetime):
+            start = start_date.date()
+        else:
+            start = start_date
+
+        if isinstance(end_date, datetime):
+            end = end_date.date()
+        else:
+            end = end_date
+
+        out: List[Dict] = []
+        for tid_txt, tdata in self.manifest.get("tournaments", {}).items():
+            date_txt = tdata.get("date")
+            if not isinstance(date_txt, str):
+                continue
+
+            try:
+                tdate = datetime.strptime(date_txt, "%Y-%m-%d")
+            except ValueError:
+                continue
+
+            if not (start <= tdate.date() <= end):
+                continue
+
+            section_names = [
+                s for s in tdata.get("sections", [])
+                if isinstance(s, str) and s.strip()
+            ]
+
+            try:
+                tid = int(tid_txt)
+            except (TypeError, ValueError):
+                continue
+
+            out.append({
+                "tournament_id": tid,
+                "date": tdate,
+                "sections": [{"name": s} for s in section_names],
+            })
+
+        out.sort(key=lambda x: x.get("date", datetime.min), reverse=True)
+        return out
     
     def save_tournament_data(
         self,

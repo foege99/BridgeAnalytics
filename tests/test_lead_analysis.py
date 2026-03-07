@@ -91,6 +91,25 @@ def test_notrump_profile_match_for_fourth_highest_with_honor():
     assert bool(out.loc[0, "lead_profile_match"]) is True
 
 
+def test_suit_contract_side_suit_third_highest_from_three_cards():
+    """In suit contracts, 3rd-highest lead from a 3-card side suit is classified as 3rd_5th."""
+    df = pd.DataFrame([
+        _base_row(
+            decl="Ø",          # leader = S
+            strain="♠",
+            contract="4♠",
+            level=4,
+            lead="♥2",
+            S_hand="75.K82.T763.QT73",  # hearts = K82, so ♥2 is 3rd-highest
+        )
+    ])
+    out = add_lead_analysis_features(df)
+
+    assert bool(out.loc[0, "lead_valid"]) is True
+    assert out.loc[0, "lead_rank_class"] == "3rd_5th"
+    assert out.loc[0, "lead_strategic_class"] != "unclear"
+
+
 def test_add_hand_features_integration_adds_lead_fields():
     df = pd.DataFrame([_base_row()])
     out = add_hand_features(df)

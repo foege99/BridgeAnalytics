@@ -3,6 +3,24 @@ import argparse
 import shutil
 from datetime import datetime, timedelta
 import pandas as pd
+import requests
+
+try:
+    from openpyxl.styles import Font
+except ImportError:
+    Font = None
+
+try:
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+    _RED_INLINE_FONT = InlineFont(color='FF0000')
+    _RICH_TEXT_AVAILABLE = True
+except ImportError:
+    CellRichText = None
+    TextBlock = None
+    InlineFont = None
+    _RED_INLINE_FONT = None
+    _RICH_TEXT_AVAILABLE = False
 
 from bridge.data_cache import DataCache
 from bridge.crawler import get_recent_tournaments
@@ -53,6 +71,37 @@ PER = "Per Føge Jensen"
 # Use unique filename to avoid Windows file-lock issues
 OUTPUT_FILE = f"Henrik_Per_ANALYSE_{datetime.now():%Y%m%d_%H%M}.xlsx"
 LATEST_OUTPUT_FILE = "Henrik_Per_ANALYSE_latest.xlsx"
+
+
+def _apply_red_suit_symbols(cell) -> None:
+    """Color only heart/diamond symbols red in a cell value when possible."""
+    val = cell.value
+    if val is None:
+        return
+
+    text = str(val)
+    if '♥' not in text and '♦' not in text:
+        return
+
+    if not _RICH_TEXT_AVAILABLE:
+        if Font is not None:
+            cell.font = Font(color='FF0000')
+        return
+
+    parts = []
+    i = 0
+    while i < len(text):
+        if text[i] in ('♥', '♦'):
+            parts.append(TextBlock(_RED_INLINE_FONT, text[i]))
+            i += 1
+        else:
+            j = i + 1
+            while j < len(text) and text[j] not in ('♥', '♦'):
+                j += 1
+            parts.append(text[i:j])
+            i = j
+
+    cell.value = CellRichText(parts)
 
 
 def parse_arguments():
@@ -148,23 +197,36 @@ def main():
     
     # ==================== CRAWL BRIDGE.DK ====================
     print(f"📡 Søger turneringer på bridge.dk fra {start_date} til {end_date}...")
-    
-    # Crawler finder turneringer fra bridge.dk
-    all_tournaments_on_site = get_recent_tournaments(start_date)
-    
-    if not all_tournaments_on_site:
-        print("Ingen turneringer fundet indenfor perioden.")
-        return
-    
-    print(f"Antal turneringer fundet på bridge.dk: {len(all_tournaments_on_site)}")
-    
-    # Filter turneringer til vores periode
-    tournaments_in_range = [
-        t for t in all_tournaments_on_site 
-        if start_date <= t['date'].date() <= end_date
-    ]
-    
-    print(f"Antal turneringer i période [{start_date} - {end_date}]: {len(tournaments_in_range)}")
+
+    online_mode = True
+    tournaments_in_range = []
+
+    try:
+        # Crawler finder turneringer fra bridge.dk
+        all_tournaments_on_site = get_recent_tournaments(start_date)
+    except requests.exceptions.RequestException as exc:
+        online_mode = False
+        print(f"⚠ Netværksfejl mod bridge.dk: {exc}")
+        print("⚠ Fallback: bruger kun lokale cache-data i valgt periode.")
+        tournaments_in_range = cache.get_cached_tournaments_in_range(start_date, end_date)
+        if not tournaments_in_range:
+            print("Ingen cachede turneringer fundet i perioden, og bridge.dk kunne ikke nås.")
+            return
+        print(f"Antal cachede turneringer i periode [{start_date} - {end_date}]: {len(tournaments_in_range)}")
+    else:
+        if not all_tournaments_on_site:
+            print("Ingen turneringer fundet indenfor perioden.")
+            return
+
+        print(f"Antal turneringer fundet på bridge.dk: {len(all_tournaments_on_site)}")
+
+        # Filter turneringer til vores periode
+        tournaments_in_range = [
+            t for t in all_tournaments_on_site
+            if start_date <= t['date'].date() <= end_date
+        ]
+
+        print(f"Antal turneringer i periode [{start_date} - {end_date}]: {len(tournaments_in_range)}")
     
     # ==================== BESLUT OM SCRAPING ====================
     print("\n📋 Beslutter hvad skal skrabes...")
@@ -172,25 +234,29 @@ def main():
     
     tournaments_to_scrape = []
     tournaments_to_use_cache = []
-    
-    for tournament in tournaments_in_range:
-        tournament_id = tournament['tournament_id']
-        tournament_date = tournament['date']
-        
-        # Tjek om bruger specifikt bad om denne periode (hvis --from/--to er brugt)
-        user_requested_older = bool(args.from_date and args.to_date)
-        
-        should_scrape = cache.should_scrape_tournament(
-            tournament_id=tournament_id,
-            tournament_date=tournament_date,
-            force_refresh=force_refresh,
-            user_requested_older=user_requested_older
-        )
-        
-        if should_scrape:
-            tournaments_to_scrape.append(tournament)
-        else:
-            tournaments_to_use_cache.append(tournament)
+
+    if not online_mode:
+        tournaments_to_use_cache = list(tournaments_in_range)
+        print("  Offline mode: scraping deaktiveret, indlæser kun cache.")
+    else:
+        for tournament in tournaments_in_range:
+            tournament_id = tournament['tournament_id']
+            tournament_date = tournament['date']
+            
+            # Tjek om bruger specifikt bad om denne periode (hvis --from/--to er brugt)
+            user_requested_older = bool(args.from_date and args.to_date)
+            
+            should_scrape = cache.should_scrape_tournament(
+                tournament_id=tournament_id,
+                tournament_date=tournament_date,
+                force_refresh=force_refresh,
+                user_requested_older=user_requested_older
+            )
+            
+            if should_scrape:
+                tournaments_to_scrape.append(tournament)
+            else:
+                tournaments_to_use_cache.append(tournament)
     
     print("="*70)
     print(f"\n📊 Beslutninger:")
@@ -329,6 +395,8 @@ def main():
         rows=('A', 'B', 'C'),
         board_start=1,
         board_end=24,
+        contract_top_n=5,
+        include_decl_hand=True,
     )
     print(f"  ✓ Lead effect rows: {len(df_lead_effect_allboards)}")
     
@@ -422,7 +490,42 @@ def main():
 
         # Lead effect pooled across all boards (best -> worst)
         if not df_lead_effect_allboards.empty:
-            df_lead_effect_allboards.to_excel(writer, sheet_name='Lead_Effect_AllBoards', index=False)
+            df_lead_export = df_lead_effect_allboards.copy()
+            lead_prefix = ['decl_hand', 'lead_type', 'lead_hand', 'lead_values', 'contract_color']
+            lead_prefix = [c for c in lead_prefix if c in df_lead_export.columns]
+            lead_rest = [
+                c for c in df_lead_export.columns
+                if c not in lead_prefix and c not in {'contract_pool', 'contract_pool_n', 'avg_play_precision_dd'}
+            ]
+            df_lead_export = df_lead_export[lead_prefix + lead_rest]
+
+            df_lead_export = df_lead_export.rename(columns={
+                'decl_hand': 'Spilfører',
+                'lead_type': 'Lead type',
+                'lead_hand': 'Udspiller',
+                'lead_values': 'Udspil',
+                'contract_color': 'Farve',
+            })
+
+            df_lead_export.to_excel(writer, sheet_name='Lead_Effect_AllBoards', index=False)
+
+            ws_lead = writer.sheets.get('Lead_Effect_AllBoards')
+            if ws_lead is not None:
+                farve_col = None
+                udspil_col = None
+                for col_idx in range(1, ws_lead.max_column + 1):
+                    if ws_lead.cell(row=1, column=col_idx).value == 'Farve':
+                        farve_col = col_idx
+                    if ws_lead.cell(row=1, column=col_idx).value == 'Udspil':
+                        udspil_col = col_idx
+
+                for row_idx in range(2, ws_lead.max_row + 1):
+                    if farve_col is not None:
+                        val = ws_lead.cell(row=row_idx, column=farve_col).value
+                        if val in ('♥', '♦'):
+                            _apply_red_suit_symbols(ws_lead.cell(row=row_idx, column=farve_col))
+                    if udspil_col is not None:
+                        _apply_red_suit_symbols(ws_lead.cell(row=row_idx, column=udspil_col))
         else:
             pd.DataFrame([
                 {'message': 'Ingen gyldige lead-data fundet for seneste turnering (A+B+C, board 1-24).'}

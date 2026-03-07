@@ -66,10 +66,9 @@ _DEFAULT_SPEC = {
             "with_honor": "low_card",
             "without_honor": "high_card",
         },
-        "trump_leads": {
+        "trump_contract_leads": {
+            "side_suit_only": True,
             "describe_only": [
-                "2nd_highest",
-                "4th_highest",
                 "3rd_5th",
             ]
         },
@@ -325,7 +324,9 @@ def _classify_rank(cards_desc: list[str], lead_rank: Optional[str]) -> tuple[str
     if n_cards >= 2 and idx == 2:
         return "2nd_highest", idx
 
-    if n_cards >= 5 and idx in (3, 5):
+    # "3rd_5th" means either 3rd-highest (needs >=3 cards) or
+    # 5th-highest (needs >=5 cards).
+    if (idx == 3 and n_cards >= 3) or (idx == 5 and n_cards >= 5):
         return "3rd_5th", idx
 
     if idx == 1:

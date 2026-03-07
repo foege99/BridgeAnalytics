@@ -1,3 +1,5 @@
+import re
+
 import pandas as pd
 import numpy as np
 
@@ -376,7 +378,7 @@ def write_board1_layout_sheet(
     ws.cell(row=5, column=3,
             value=f"Resultat: {tricks_val if tricks_val is not None else '(ukendt)'}")
 
-    # Par (row 14, col E)
+    # Par/DD-best contract note moved to O9 (requested placement)
     par_score = _get_field(per_row, 'par_score')
     par_contract = _get_field(per_row, 'par_contract')
     par_side = _get_field(per_row, 'par_side')
@@ -386,7 +388,7 @@ def write_board1_layout_sheet(
             par_text += f" {par_side}"
     else:
         par_text = None
-    ws.cell(row=14, column=5,
+    ws.cell(row=9, column=15,
             value=par_text if par_text is not None else "Par: (ukendt)")
 
     # --- Column widths ---
@@ -394,6 +396,7 @@ def write_board1_layout_sheet(
     ws.column_dimensions['B'].width = 22
     ws.column_dimensions['C'].width = 22
     ws.column_dimensions['E'].width = 25
+    ws.column_dimensions['O'].width = 32
 
        # ------------------------------------------------------------------
     # 6. Traveller table (ALL results for same tournament_date + row + board_no)
@@ -411,12 +414,12 @@ def write_board1_layout_sheet(
 
     # Traveller headers (bridge.dk style)
     _TRAVELLER_HEADERS = [
-        'NS', 'ØV', 'Kontrakt', 'Udspil', 'Stik',
+        'NS', 'ØV', 'Kontrakt', 'Spilfører', 'Udspil', 'Stik',
         'Score NS', 'Score ØV', 'Point NS', 'Point ØV', 'Pct NS', 'Pct ØV',
         'Pct Defense', 'Pct Decl',
         'Lead type',
     ]
-    _TRAV_START_COL = 7  # G
+    _TRAV_START_COL = 4  # D
     _TRAV_HEADER_ROW = 1
     _TRAV_DATA_START_ROW = 2
 
@@ -581,6 +584,10 @@ def write_board1_layout_sheet(
         blob = f"{ns_txt} {ew_txt}".lower()
         return ("henrik friis" in blob) and ("per føge jensen" in blob)
 
+    target_pair_lead_value = None
+    target_pair_contract_color = None
+    target_pair_dirs: set[str] = set()
+
     # Write data rows
     for ridx, (_, r) in enumerate(df_trav.iterrows(), start=0):
         out_row = _TRAV_DATA_START_ROW + ridx
@@ -593,6 +600,7 @@ def write_board1_layout_sheet(
             (ns_txt, 'left'),
             (ew_txt, 'left'),
             (_get_field(r, 'contract'), 'center'),
+            (_normalize_compass(_get_field(r, 'decl')), 'center'),
             (_get_field(r, 'lead'), 'center'),
             (_get_field(r, 'tricks'), 'right'),
             (score_ns_val, 'right'),
@@ -610,32 +618,42 @@ def write_board1_layout_sheet(
         fill = None
         if _is_target_pair(ns_txt, ew_txt):
             fill = _HILITE_YELLOW
+            target_pair_lead_value = _get_field(r, 'lead')
+            target_pair_contract_color = _contract_pool_to_color_symbol(
+                _contract_pool_from_row(r)
+            )
+            ns_blob = str(ns_txt).lower()
+            ew_blob = str(ew_txt).lower()
+            if ("henrik friis" in ns_blob) and ("per føge jensen" in ns_blob):
+                target_pair_dirs = {'N', 'S'}
+            elif ("henrik friis" in ew_blob) and ("per føge jensen" in ew_blob):
+                target_pair_dirs = {'Ø', 'V'}
         elif (ridx % 2) == 1:
             fill = _ZEBRA_FILL
 
         for cidx, (val, align) in enumerate(values_and_align):
             cell = ws.cell(row=out_row, column=_TRAV_START_COL + cidx)
-            # Contract (index 2) and lead/Udspil (index 3) may contain ♥/♦
-            if cidx in (2, 3):
+            # Contract (index 2) and lead/Udspil (index 4) may contain ♥/♦
+            if cidx in (2, 4):
                 _write_with_red_suits(cell, val)
             else:
                 cell.value = val
             _apply_data_style(cell, align=align, fill_color=fill)
 
     # Column widths for traveller columns (tuned for reliable header readability)
-    _TRAV_COL_WIDTHS = [28, 30, 12, 10, 6, 12, 12, 10, 10, 8, 8, 11, 11, 28]
-    _col_letters = 'GHIJKLMNOPQRST'
+    _TRAV_COL_WIDTHS = [28, 30, 12, 9, 10, 6, 12, 12, 10, 10, 8, 8, 11, 11, 28]
+    _col_letters = 'DEFGHIJKLMNOPQR'
     for letter, width in zip(_col_letters, _TRAV_COL_WIDTHS):
         ws.column_dimensions[letter].width = width
     ws.row_dimensions[_TRAV_HEADER_ROW].height = 20
 
     # Compute DD start row: traveller header + traveller rows + 2 blank rows
     _DD_START_ROW = _TRAV_HEADER_ROW + 1 + len(df_trav) + 2
-    # _DD_START_COL = 7  
-    # G    # ------------------------------------------------------------------
-    # 7. Double Dummy table  G6:M10
+    # _DD_START_COL = 4
+    # D    # ------------------------------------------------------------------
+    # 7. Double Dummy table  D6:J10
     # ------------------------------------------------------------------
-    _DD_START_COL = 7  # G
+    _DD_START_COL = 4  # D
 
     dd_valid = per_row.get('dd_valid')
     if dd_valid is None or (isinstance(dd_valid, float) and pd.isna(dd_valid)):
@@ -647,11 +665,14 @@ def write_board1_layout_sheet(
         if Font is not None:
             na_cell.font = Font(italic=True)
     else:
+        if not target_pair_dirs:
+            partner_dir = {'N': 'S', 'S': 'N', 'Ø': 'V', 'V': 'Ø'}.get(per_dir)
+            if partner_dir is not None:
+                target_pair_dirs = {per_dir, partner_dir}
+
         # Title
         title_cell = ws.cell(row=_DD_START_ROW, column=_DD_START_COL,
                              value='Double Dummy')
-        if Font is not None:
-            title_cell.font = Font(bold=True)
 
         _DD_STRAIN_HEADERS = ['NT', '♠', '♥', '♦', '♣', 'HP']
         _DD_DIRS_ORDER = ['N', 'S', 'Ø', 'V']
@@ -660,17 +681,25 @@ def write_board1_layout_sheet(
         thin = Side(style='thin') if _styles_available else None
 
         def _dd_cell_style(cell, is_header: bool = False,
-                           is_ns: bool = False) -> None:
+                           is_ns: bool = False,
+                           fill_color: str | None = None) -> None:
             if not _styles_available:
                 return
             cell.alignment = Alignment(horizontal='center', vertical='center')
             if thin:
                 cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
-            if is_header and Font is not None:
+            if fill_color is not None:
+                cell.fill = PatternFill(fill_type='solid', fgColor=fill_color)
+                if is_header and Font is not None:
+                    cell.font = Font(bold=True)
+            elif is_header and Font is not None:
                 cell.fill = PatternFill(fill_type='solid', fgColor=_GRAY_FILL)
                 cell.font = Font(bold=True)
             elif is_ns:
                 cell.fill = PatternFill(fill_type='solid', fgColor='EBF1DE')
+
+        # Title cell should look like DD table headers.
+        _dd_cell_style(title_cell, is_header=True)
 
         # Header row: H6:M6
         for j, strain_hdr in enumerate(_DD_STRAIN_HEADERS):
@@ -682,6 +711,7 @@ def write_board1_layout_sheet(
         for i, dir_code in enumerate(_DD_DIRS_ORDER):
             row_num = _DD_START_ROW + 1 + i
             is_ns = dir_code in ('N', 'S')
+            row_fill = _HILITE_YELLOW if dir_code in target_pair_dirs else None
 
             # Row label
             label_cell = ws.cell(row=row_num, column=_DD_START_COL,
@@ -700,7 +730,7 @@ def write_board1_layout_sheet(
                 else:
                     val = None
                 dc = ws.cell(row=row_num, column=_DD_START_COL + 1 + j, value=val)
-                _dd_cell_style(dc, is_ns=is_ns)
+                _dd_cell_style(dc, is_ns=is_ns, fill_color=row_fill)
 
             # HCP column (M = index 5)
             hcp_col = f'dd_{dir_code}_HCP'
@@ -713,14 +743,14 @@ def write_board1_layout_sheet(
             else:
                 hcp_val = None
             hc = ws.cell(row=row_num, column=_DD_START_COL + 6, value=hcp_val)
-            _dd_cell_style(hc, is_ns=is_ns)
+            _dd_cell_style(hc, is_ns=is_ns, fill_color=row_fill)
 
     # ------------------------------------------------------------------
     # 8. Lead-effekt (pooled A+B+C for current board + tournament)
     # ------------------------------------------------------------------
     _dd_end_row = _DD_START_ROW + 4 if dd_valid else _DD_START_ROW
     _LEAD_START_ROW = _dd_end_row + 2
-    _LEAD_START_COL = 7  # G
+    _LEAD_START_COL = 4  # D
 
     df_lead_pool = df.copy()
     if cur_date is not None:
@@ -746,12 +776,19 @@ def write_board1_layout_sheet(
     total_leads = len(df_lead_pool)
     df_lead_valid = _filter_valid_leads(df_lead_pool)
     valid_leads = len(df_lead_valid)
-    lead_summary_rows = _make_lead_effect_summary_rows(df_lead_valid)
+    lead_summary_rows = _make_lead_effect_summary_rows(
+        df_lead_valid,
+        contract_top_n=5,
+        include_decl_hand=True,
+    )
+
+    show_contract_pool = any('contract_pool' in r for r in lead_summary_rows)
+    show_decl_hand = any('decl_hand' in r for r in lead_summary_rows)
 
     title_cell = ws.cell(
         row=_LEAD_START_ROW,
         column=_LEAD_START_COL,
-        value=f"Lead-effekt (pooled {rows_present_txt})",
+        value=f"Lead-effekt (pooled {rows_present_txt}, top-5 kontraktpool)",
     )
     _bold(title_cell)
 
@@ -761,7 +798,50 @@ def write_board1_layout_sheet(
         value=f"Gyldige udspil: {valid_leads}/{total_leads}",
     )
 
-    _LEAD_HEADERS = ['Lead type', 'Antal', 'Avg Pct Defense', 'Avg Pct Decl', 'Avg DD precision', 'Make-rate']
+    _LEAD_HEADERS = []
+    if show_decl_hand:
+        _LEAD_HEADERS.append('Spilfører')
+    _LEAD_HEADERS.append('Lead type')
+    if show_decl_hand:
+        _LEAD_HEADERS.append('Udspiller')
+    _LEAD_HEADERS.append('Udspil')
+    if show_contract_pool:
+        _LEAD_HEADERS.append('Farve')
+    _LEAD_HEADERS.extend(['Antal', 'Avg Pct Defense', 'Avg Pct Decl', 'Make-rate'])
+    lead_header_pos = {h: idx for idx, h in enumerate(_LEAD_HEADERS)}
+    lead_color_col_rel = lead_header_pos.get('Farve')
+    lead_udspiller_col_rel = lead_header_pos.get('Udspiller')
+    lead_udspil_col_rel = lead_header_pos.get('Udspil')
+
+    def _normalize_lead_token(value) -> str | None:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        s = str(value).replace('\xa0', '').replace(' ', '').strip().upper()
+        return s if s else None
+
+    def _normalize_contract_color_token(value) -> str | None:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        s = str(value).strip().upper().replace('UT', 'NT')
+        if not s or s == 'UKENDT':
+            return None
+        if s == 'NT':
+            return 'NT'
+        if s in ('♠', 'S'):
+            return '♠'
+        if s in ('♥', 'H'):
+            return '♥'
+        if s in ('♦', 'D'):
+            return '♦'
+        if s in ('♣', 'C'):
+            return '♣'
+        return None
+
+    target_pair_lead_norm = _normalize_lead_token(target_pair_lead_value)
+    target_pair_contract_color_norm = _normalize_contract_color_token(
+        target_pair_contract_color
+    )
+
     _LEAD_HDR_ROW = _LEAD_START_ROW + 2
     for idx, header in enumerate(_LEAD_HEADERS):
         c = ws.cell(row=_LEAD_HDR_ROW, column=_LEAD_START_COL + idx, value=header)
@@ -769,29 +849,111 @@ def write_board1_layout_sheet(
 
     for ridx, item in enumerate(lead_summary_rows):
         row_no = _LEAD_HDR_ROW + 1 + ridx
-        values = [
-            item.get('lead_type'),
+        values = []
+        aligns = []
+        row_udspiller_should_bold = False
+
+        if show_decl_hand:
+            values.append(item.get('decl_hand'))
+            aligns.append('center')
+
+        values.append(item.get('lead_type'))
+        aligns.append('left')
+
+        if show_decl_hand:
+            lead_hand = item.get('lead_hand')
+            values.append(lead_hand)
+            aligns.append('center')
+            lead_hand_norm = _normalize_compass(lead_hand)
+            row_udspiller_should_bold = (
+                lead_hand_norm is not None and lead_hand_norm in target_pair_dirs
+            )
+
+        values.append(item.get('lead_values'))
+        aligns.append('left')
+
+        if show_contract_pool:
+            values.append(item.get('contract_color'))
+            aligns.append('left')
+
+        values.extend([
             item.get('n'),
             None if item.get('avg_pct_defense') is None or pd.isna(item.get('avg_pct_defense')) else round(float(item['avg_pct_defense']), 1),
             None if item.get('avg_pct_decl') is None or pd.isna(item.get('avg_pct_decl')) else round(float(item['avg_pct_decl']), 1),
-            None if item.get('avg_play_precision_dd') is None or pd.isna(item.get('avg_play_precision_dd')) else round(float(item['avg_play_precision_dd']), 2),
             None if item.get('make_rate') is None or pd.isna(item.get('make_rate')) else round(float(item['make_rate']) * 100.0, 1),
-        ]
-        aligns = ['left', 'right', 'right', 'right', 'right', 'right']
+        ])
+        aligns.extend(['right', 'right', 'right', 'right'])
+
+        row_contains_target_lead = False
+        if target_pair_lead_norm is not None:
+            leads_txt = item.get('lead_values')
+            if leads_txt is not None:
+                lead_tokens = [
+                    _normalize_lead_token(part)
+                    for part in str(leads_txt).split(',')
+                ]
+                row_contains_target_lead = target_pair_lead_norm in {
+                    tok for tok in lead_tokens if tok is not None
+                }
+
+        row_contract_matches = True
+        if show_contract_pool:
+            row_contract_color_norm = _normalize_contract_color_token(
+                item.get('contract_color')
+            )
+            row_contract_matches = (
+                target_pair_contract_color_norm is not None
+                and row_contract_color_norm == target_pair_contract_color_norm
+            )
+
+        row_fill = _HILITE_YELLOW if (row_contains_target_lead and row_contract_matches) else None
+
         for cidx, (val, align) in enumerate(zip(values, aligns)):
-            dc = ws.cell(row=row_no, column=_LEAD_START_COL + cidx, value=val)
-            _apply_data_style(dc, align=align)
+            dc = ws.cell(row=row_no, column=_LEAD_START_COL + cidx)
+            if lead_udspil_col_rel is not None and cidx == lead_udspil_col_rel:
+                _write_with_red_suits(dc, val)
+            else:
+                dc.value = val
+
+            _apply_data_style(dc, align=align, fill_color=row_fill)
+            if (
+                lead_udspiller_col_rel is not None
+                and cidx == lead_udspiller_col_rel
+                and row_udspiller_should_bold
+                and Font is not None
+            ):
+                dc.font = Font(bold=True, color='000000')
+            if (
+                lead_color_col_rel is not None
+                and cidx == lead_color_col_rel
+                and val in ('♥', '♦')
+                and Font is not None
+            ):
+                dc.font = Font(color='FF0000')
 
     pct_rows = [
         r for r in lead_summary_rows
         if r.get('avg_pct_defense') is not None and not pd.isna(r.get('avg_pct_defense'))
     ]
     if len(pct_rows) >= 2:
+        def _summary_label(item: dict) -> str:
+            parts = []
+            if show_decl_hand:
+                decl_hand = item.get('decl_hand')
+                if decl_hand is not None:
+                    parts.append(str(decl_hand))
+            parts.append(str(item.get('lead_type', 'ukendt')))
+            if show_contract_pool:
+                pool = item.get('contract_color')
+                if pool is not None:
+                    parts.append(str(pool))
+            return ' / '.join(parts)
+
         best = max(pct_rows, key=lambda x: float(x['avg_pct_defense']))
         worst = min(pct_rows, key=lambda x: float(x['avg_pct_defense']))
         msg = (
-            f"Indtryk: bedst {best['lead_type']} ({float(best['avg_pct_defense']):.1f}% defense) | "
-            f"svagest {worst['lead_type']} ({float(worst['avg_pct_defense']):.1f}% defense)"
+            f"Indtryk: bedst {_summary_label(best)} ({float(best['avg_pct_defense']):.1f}% defense) | "
+            f"svagest {_summary_label(worst)} ({float(worst['avg_pct_defense']):.1f}% defense)"
         )
         info_row = _LEAD_HDR_ROW + 1 + len(lead_summary_rows) + 1
         info_cell = ws.cell(row=info_row, column=_LEAD_START_COL, value=msg)
@@ -896,6 +1058,158 @@ def _to_float_or_none(value) -> float | None:
         return None
 
 
+_CONTRACT_TOKEN_RE = re.compile(r'([1-7])\s*(NT|[SHDC♠♥♦♣])', re.IGNORECASE)
+_STRAIN_TO_KEY = {
+    'S': 'S', '♠': 'S',
+    'H': 'H', '♥': 'H',
+    'D': 'D', '♦': 'D',
+    'C': 'C', '♣': 'C',
+    'NT': 'NT', 'UT': 'NT',
+}
+_STRAIN_DISPLAY = {
+    'S': '♠',
+    'H': '♥',
+    'D': '♦',
+    'C': '♣',
+    'NT': 'NT',
+}
+
+
+def _to_int_or_none(value) -> int | None:
+    """Convert value to int when possible, else None."""
+    num = _to_float_or_none(value)
+    if num is None or pd.isna(num):
+        return None
+    try:
+        return int(num)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_strain_key(value) -> str | None:
+    """Normalize strain text/symbol to canonical key (NT/S/H/D/C)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    s = str(value).strip().upper()
+    if not s:
+        return None
+    return _STRAIN_TO_KEY.get(s)
+
+
+def _contract_level_and_strain_from_row(row: pd.Series) -> tuple[int | None, str | None]:
+    """Extract (level, strain_key) from row fields (level/strain/contract)."""
+    level = _to_int_or_none(_row_nonnull(row, 'level'))
+    strain_key = _normalize_strain_key(_row_nonnull(row, 'strain'))
+
+    if level is not None and strain_key is not None:
+        return level, strain_key
+
+    contract_val = _row_nonnull(row, 'contract', 'contract_raw')
+    if contract_val is None:
+        return level, strain_key
+
+    txt = str(contract_val).strip().upper().replace('UT', 'NT')
+    m = _CONTRACT_TOKEN_RE.search(txt)
+    if not m:
+        return level, strain_key
+
+    if level is None:
+        try:
+            level = int(m.group(1))
+        except (TypeError, ValueError):
+            level = None
+    if strain_key is None:
+        strain_key = _normalize_strain_key(m.group(2))
+
+    return level, strain_key
+
+
+def _contract_pool_from_row(row: pd.Series) -> str:
+    """Build pooled contract label: 1-5 by strain, while slams stay separate."""
+    level, strain_key = _contract_level_and_strain_from_row(row)
+    if level is None or strain_key is None:
+        return 'ukendt'
+
+    strain_display = _STRAIN_DISPLAY.get(strain_key, strain_key)
+    if level >= 6:
+        return f"{level}{strain_display}"
+    if 1 <= level <= 5:
+        return f"1-5{strain_display}"
+    return 'ukendt'
+
+
+def _contract_pool_to_color_symbol(value) -> str:
+    """Convert contract-pool text to a strain symbol (or NT)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return 'ukendt'
+
+    s = str(value).strip().upper()
+    if not s or s == 'UKENDT':
+        return 'ukendt'
+
+    if s.endswith('NT') or s.endswith('UT') or s in ('NT', 'UT'):
+        return _STRAIN_DISPLAY['NT']
+
+    # Most contract-pool values end with suit symbol (e.g. 1-5♥, 6♠).
+    last = s[-1]
+    if last == '♠' or last == 'S':
+        return _STRAIN_DISPLAY['S']
+    if last == '♥' or last == 'H':
+        return _STRAIN_DISPLAY['H']
+    if last == '♦' or last == 'D':
+        return _STRAIN_DISPLAY['D']
+    if last == '♣' or last == 'C':
+        return _STRAIN_DISPLAY['C']
+
+    # Fallback for unexpected formats containing suit text.
+    if '♠' in s:
+        return _STRAIN_DISPLAY['S']
+    if '♥' in s:
+        return _STRAIN_DISPLAY['H']
+    if '♦' in s:
+        return _STRAIN_DISPLAY['D']
+    if '♣' in s:
+        return _STRAIN_DISPLAY['C']
+
+    return 'ukendt'
+
+
+def _collect_concrete_leads(values: pd.Series) -> str | None:
+    """Return unique concrete lead values as comma-separated text."""
+    seen: list[str] = []
+    for val in values:
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            continue
+        txt = str(val).strip()
+        if not txt or txt.lower() == 'nan':
+            continue
+        if txt not in seen:
+            seen.append(txt)
+    if not seen:
+        return None
+    return ', '.join(seen)
+
+
+def _decl_hand_from_row(row: pd.Series) -> str:
+    """Return declarer hand (N/S/Ø/V) or 'ukendt'."""
+    d = _normalize_compass(_row_nonnull(row, 'decl'))
+    return d if d is not None else 'ukendt'
+
+
+def _lead_hand_from_decl_hand(value) -> str:
+    """Return opening-lead hand (left of declarer) as N/S/Ø/V or 'ukendt'."""
+    d = _normalize_compass(value)
+    if d is None:
+        return 'ukendt'
+    left_of_decl = {
+        'N': 'Ø',
+        'Ø': 'S',
+        'S': 'V',
+        'V': 'N',
+    }
+    return left_of_decl.get(d, 'ukendt')
+
+
 def _pct_for_side(row: pd.Series, side: str | None) -> float | None:
     """Return pct value for given side from a row."""
     if side == 'NS':
@@ -983,8 +1297,13 @@ def _filter_valid_leads(df: pd.DataFrame) -> pd.DataFrame:
     return df[valid_mask].copy()
 
 
-def _make_lead_effect_summary_rows(df: pd.DataFrame) -> list[dict]:
-    """Aggregate lead-effect metrics by lead type."""
+def _make_lead_effect_summary_rows(
+    df: pd.DataFrame,
+    *,
+    contract_top_n: int | None = None,
+    include_decl_hand: bool = False,
+) -> list[dict]:
+    """Aggregate lead-effect metrics by lead type and optional contract context."""
     if df.empty:
         return []
 
@@ -1011,8 +1330,65 @@ def _make_lead_effect_summary_rows(df: pd.DataFrame) -> list[dict]:
     made = made.where(~(tricks_num.isna() | req.isna()), other=pd.NA)
     work['_made_num'] = pd.to_numeric(made, errors='coerce')
 
+    use_contract_pool = contract_top_n is not None and int(contract_top_n) > 0
+    contract_count_map: dict[str, int] = {}
+    contract_rank_map: dict[str, int] = {}
+
+    group_cols: list[str] = []
+    if use_contract_pool:
+        work['_contract_pool'] = work.apply(_contract_pool_from_row, axis=1)
+
+        pool_counts = (
+            work.groupby('_contract_pool', dropna=False)
+            .size()
+            .reset_index(name='contract_pool_n')
+            .sort_values(by=['contract_pool_n', '_contract_pool'], ascending=[False, True])
+            .reset_index(drop=True)
+        )
+        top_n = int(contract_top_n)
+        top_pools = pool_counts.head(top_n)['_contract_pool'].astype(str).tolist()
+
+        if not top_pools:
+            return []
+
+        contract_count_map = {
+            str(r['_contract_pool']): int(r['contract_pool_n'])
+            for _, r in pool_counts.iterrows()
+        }
+        contract_rank_map = {pool: idx + 1 for idx, pool in enumerate(top_pools)}
+
+        work['_contract_pool'] = work['_contract_pool'].astype(str)
+        work = work[work['_contract_pool'].isin(top_pools)].copy()
+        work['_contract_pool_n'] = work['_contract_pool'].map(contract_count_map)
+        work['_contract_pool_rank'] = work['_contract_pool'].map(contract_rank_map)
+        group_cols.append('_contract_pool')
+
+    if include_decl_hand:
+        work['_decl_hand'] = work.apply(_decl_hand_from_row, axis=1)
+        group_cols.append('_decl_hand')
+
+    group_cols.append('_lead_type')
+
     rows = []
-    for lead_type, g in work.groupby('_lead_type', dropna=False):
+    has_contract_pool = '_contract_pool' in group_cols
+    has_decl_hand = '_decl_hand' in group_cols
+
+    for group_key, g in work.groupby(group_cols, dropna=False):
+        keys = group_key if isinstance(group_key, tuple) else (group_key,)
+        key_idx = 0
+
+        contract_pool = None
+        if has_contract_pool:
+            contract_pool = str(keys[key_idx])
+            key_idx += 1
+
+        decl_hand = None
+        if has_decl_hand:
+            decl_hand = str(keys[key_idx])
+            key_idx += 1
+
+        lead_type = keys[key_idx]
+
         pct_def_series = pd.to_numeric(g['_pct_defense'], errors='coerce')
         pct_decl_series = pd.to_numeric(g['_pct_decl'], errors='coerce')
         precision_series = (
@@ -1026,24 +1402,67 @@ def _make_lead_effect_summary_rows(df: pd.DataFrame) -> list[dict]:
         else:
             n_boards = 0
 
-        rows.append({
+        item = {
             'lead_type': str(lead_type) if lead_type is not None else 'ukendt',
+            'lead_values': _collect_concrete_leads(g['lead']) if 'lead' in g.columns else None,
             'n': len(g),
             'n_boards': n_boards,
             'avg_pct_defense': pct_def_series.mean() if len(pct_def_series) else None,
             'avg_pct_decl': pct_decl_series.mean() if len(pct_decl_series) else None,
             'avg_play_precision_dd': precision_series.mean() if len(precision_series) else None,
             'make_rate': made_series.mean() if len(made_series) else None,
-        })
+        }
 
-    rows.sort(
-        key=lambda x: (
-            float('inf') if x['avg_pct_defense'] is None or pd.isna(x['avg_pct_defense']) else -float(x['avg_pct_defense']),
-            float('inf') if x['make_rate'] is None or pd.isna(x['make_rate']) else -float(x['make_rate']),
-            -(x['n'] if x['n'] is not None else 0),
-            str(x.get('lead_type', '')),
+        if has_contract_pool and contract_pool is not None:
+            item['contract_pool'] = contract_pool
+            item['contract_color'] = _contract_pool_to_color_symbol(contract_pool)
+            item['contract_pool_n'] = int(contract_count_map.get(contract_pool, len(g)))
+            item['contract_pool_rank'] = int(contract_rank_map.get(contract_pool, 999999))
+
+        if has_decl_hand and decl_hand is not None:
+            item['decl_hand'] = decl_hand
+            item['lead_hand'] = _lead_hand_from_decl_hand(decl_hand)
+
+        rows.append(item)
+
+    def _desc_sort_or_inf(value) -> float:
+        if value is None or pd.isna(value):
+            return float('inf')
+        return -float(value)
+
+    decl_order = {'N': 1, 'S': 2, 'Ø': 3, 'V': 4, 'ukendt': 5}
+
+    if has_contract_pool:
+        rows.sort(
+            key=lambda x: (
+                int(x.get('contract_pool_rank', 999999)),
+                decl_order.get(str(x.get('decl_hand', 'ukendt')), 99) if has_decl_hand else 0,
+                _desc_sort_or_inf(x.get('avg_pct_defense')),
+                _desc_sort_or_inf(x.get('make_rate')),
+                -(x['n'] if x.get('n') is not None else 0),
+                str(x.get('lead_type', '')),
+            )
         )
-    )
+    elif has_decl_hand:
+        rows.sort(
+            key=lambda x: (
+                decl_order.get(str(x.get('decl_hand', 'ukendt')), 99),
+                _desc_sort_or_inf(x.get('avg_pct_defense')),
+                _desc_sort_or_inf(x.get('make_rate')),
+                -(x['n'] if x.get('n') is not None else 0),
+                str(x.get('lead_type', '')),
+            )
+        )
+    else:
+        rows.sort(
+            key=lambda x: (
+                _desc_sort_or_inf(x.get('avg_pct_defense')),
+                _desc_sort_or_inf(x.get('make_rate')),
+                -(x['n'] if x.get('n') is not None else 0),
+                str(x.get('lead_type', '')),
+            )
+        )
+
     return rows
 
 
@@ -1052,6 +1471,8 @@ def make_latest_tournament_lead_effect_allboards(
     rows: tuple[str, ...] = ('A', 'B', 'C'),
     board_start: int = 1,
     board_end: int = 24,
+    contract_top_n: int | None = None,
+    include_decl_hand: bool = False,
 ) -> pd.DataFrame:
     """
     Build pooled lead-effect table across all checked boards in latest tournament.
@@ -1094,7 +1515,11 @@ def make_latest_tournament_lead_effect_allboards(
     valid = _filter_valid_leads(work)
     valid_leads = len(valid)
 
-    summary_rows = _make_lead_effect_summary_rows(valid)
+    summary_rows = _make_lead_effect_summary_rows(
+        valid,
+        contract_top_n=contract_top_n,
+        include_decl_hand=include_decl_hand,
+    )
     if not summary_rows:
         return pd.DataFrame()
 
@@ -1102,7 +1527,6 @@ def make_latest_tournament_lead_effect_allboards(
     out.insert(0, 'rank_best_to_worst', range(1, len(out) + 1))
     out['avg_pct_defense'] = pd.to_numeric(out['avg_pct_defense'], errors='coerce').round(1)
     out['avg_pct_decl'] = pd.to_numeric(out['avg_pct_decl'], errors='coerce').round(1)
-    out['avg_play_precision_dd'] = pd.to_numeric(out['avg_play_precision_dd'], errors='coerce').round(2)
     out['make_rate_pct'] = (pd.to_numeric(out['make_rate'], errors='coerce') * 100.0).round(1)
 
     out['tournament_date'] = latest_date
@@ -1113,8 +1537,9 @@ def make_latest_tournament_lead_effect_allboards(
     out['total_leads'] = total_leads
 
     ordered = [
-        'rank_best_to_worst', 'lead_type', 'n', 'n_boards',
-        'avg_pct_defense', 'avg_pct_decl', 'avg_play_precision_dd', 'make_rate_pct',
+        'rank_best_to_worst', 'contract_pool_rank', 'contract_pool', 'contract_color', 'contract_pool_n', 'decl_hand',
+        'lead_type', 'lead_hand', 'lead_values', 'n', 'n_boards',
+        'avg_pct_defense', 'avg_pct_decl', 'make_rate_pct',
         'tournament_date', 'rows_pooled',
         'board_start', 'board_end', 'valid_leads', 'total_leads',
     ]
