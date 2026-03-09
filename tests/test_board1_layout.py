@@ -857,7 +857,7 @@ def test_bid_scaffold_third_hand_considers_first_and_second_calls():
 
 
 def test_bid_scaffold_log_lines_start_with_current_bid():
-    """Log lines should begin with current call display bid (e.g., 1♠ then 2♥)."""
+    """Log lines should begin with side/seat + current bid (e.g., NS/N, 1♠: ...)."""
     df = _make_df(
         dealer='N',
         N_hand='AKQJ9.8765.3.K2',
@@ -873,9 +873,9 @@ def test_bid_scaffold_log_lines_start_with_current_bid():
         for r in range(37, 57)
     ]
 
-    assert any(line.startswith('1♠ ') for line in log_lines)
-    assert any(line.startswith('2♥ ') for line in log_lines)
-    assert any(line.startswith('2♠ ') for line in log_lines)
+    assert any(line.startswith('NS/N, 1♠:') for line in log_lines)
+    assert any(line.startswith('ØV/Ø, 2♥:') for line in log_lines)
+    assert any(line.startswith('NS/S, 2♠:') for line in log_lines)
 
 
 def test_bid_scaffold_fourth_hand_bid_and_wrap_after_three_calls():
@@ -898,7 +898,7 @@ def test_bid_scaffold_fourth_hand_bid_and_wrap_after_three_calls():
 
 
 def test_bid_scaffold_log_includes_fourth_hand_with_bid_prefix():
-    """Log should include 4H summary and lines prefixed with 4H's actual bid."""
+    """Log should include fourth-hand lines prefixed with side/seat and current bid."""
     df = _make_df(
         dealer='N',
         N_hand='T9842.83.742.953',
@@ -914,8 +914,58 @@ def test_bid_scaffold_log_includes_fourth_hand_with_bid_prefix():
         str(ws.cell(row=r, column=1).value or '')
         for r in range(37, 80)
     ]
-    assert any('Runde 1: 4H(V)=2♥' in line for line in log_lines)
-    assert any(line.startswith('2♥ 4H ') for line in log_lines)
+    assert any(line.startswith('ØV/V, 2♥:') for line in log_lines)
+
+
+def test_bid_scaffold_second_round_places_all_four_calls():
+    """Second round should place calls 5-8 in sequence with normal row wrap."""
+    df = _make_df(
+        dealer='N',
+        N_hand='JT64.AKJT9.95.Q6',
+        Ø_hand='A7.3.AKJ732.T942',
+        S_hand='KQ852.Q2.Q64.873',
+        V_hand='93.87654.T8.AKJ5',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # Round 1: C21, D21, A22, B22
+    assert ws.cell(row=21, column=3).value is not None
+    assert ws.cell(row=21, column=4).value is not None
+    assert ws.cell(row=22, column=1).value is not None
+    assert ws.cell(row=22, column=2).value is not None
+
+    # Round 2: C22, D22, A23, B23
+    assert ws.cell(row=22, column=3).value is not None
+    assert ws.cell(row=22, column=4).value is not None
+    assert ws.cell(row=23, column=1).value is not None
+    assert ws.cell(row=23, column=2).value is not None
+
+
+def test_bid_scaffold_log_includes_second_round_side_seat_prefixes():
+    """Second-round log lines should also start with side/seat + bid prefix."""
+    df = _make_df(
+        dealer='N',
+        N_hand='JT64.AKJT9.95.Q6',
+        Ø_hand='A7.3.AKJ732.T942',
+        S_hand='KQ852.Q2.Q64.873',
+        V_hand='93.87654.T8.AKJ5',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    log_lines = [
+        str(ws.cell(row=r, column=1).value or '')
+        for r in range(37, 120)
+    ]
+
+    # Second-round prefixes expected in this scenario:
+    assert any(line.startswith('NS/N, 3♠:') for line in log_lines)
+    assert any(line.startswith('ØV/Ø, 4♣:') for line in log_lines)
+    assert any(line.startswith('NS/S, 4♠:') for line in log_lines)
+    assert any(line.startswith('ØV/V, 5♣:') for line in log_lines)
 
 
 def test_bid_scaffold_fourth_hand_avoids_enemy_suit_natural_bid():
@@ -937,6 +987,29 @@ def test_bid_scaffold_fourth_hand_avoids_enemy_suit_natural_bid():
     # Fourth call at B22 must not be 3♥; with this heuristic it becomes 3♣.
     assert str(ws.cell(row=22, column=2).value) != '3♥'
     assert str(ws.cell(row=22, column=2).value) == '3♣'
+
+
+def test_bid_scaffold_opener_shows_four_card_major_after_minor_support():
+    """After 1♣-P-2♣-P, opener with 4 hearts should show 2♥ before raising clubs further."""
+    df = _make_df(
+        dealer='V',
+        V_hand='Q6.QJ87.AK8.8532',
+        Ø_hand='A75.KT963.Q.K976',
+        N_hand='3.A42.9632.AQJT4',
+        S_hand='KJT9842.5.JT754.',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # Round 1 starts at V: 1♣ - P - 2♣ - P
+    assert str(ws.cell(row=21, column=2).value) == '1♣'
+    assert ws.cell(row=21, column=3).value == 'PAS'
+    assert str(ws.cell(row=21, column=4).value) == '2♣'
+    assert ws.cell(row=22, column=1).value == 'PAS'
+
+    # Round 2 opener rebid should now show hearts, not 3♣.
+    assert str(ws.cell(row=22, column=2).value) == '2♥'
 
 
 def test_right_info_block_contract_fields():

@@ -421,7 +421,7 @@ def write_board1_layout_sheet(
     _BID_DATA_START_ROW = 21
     _BID_DATA_ROWS = 12
     _BID_LOG_START_ROW = _BID_DATA_START_ROW + _BID_DATA_ROWS + 3  # ~15 rows below header
-    _BID_LOG_MAX_LINES = 40
+    _BID_LOG_MAX_LINES = 120
     _BID_START_COL = 1  # A
     _BID_HEADERS = ['S', 'V', 'N', 'Ø']
     _BID_LIGHT_GREEN = 'EAF2E3'
@@ -457,6 +457,7 @@ def write_board1_layout_sheet(
     second_guess = round1_guess.get('second_call', {}) if isinstance(round1_guess, dict) else {}
     third_guess = round1_guess.get('third_call', {}) if isinstance(round1_guess, dict) else {}
     fourth_guess = round1_guess.get('fourth_call', {}) if isinstance(round1_guess, dict) else {}
+    call_sequence_in = round1_guess.get('call_sequence') if isinstance(round1_guess, dict) else None
     opening_log_lines = round1_guess.get('log_lines') if isinstance(round1_guess, dict) else []
     bid_col_by_seat = {'S': 1, 'V': 2, 'N': 3, 'Ø': 4}
 
@@ -469,14 +470,23 @@ def write_board1_layout_sheet(
     fourth_seat = fourth_guess.get('dealer') if isinstance(fourth_guess, dict) else None
     fourth_display = fourth_guess.get('display_bid') if isinstance(fourth_guess, dict) else None
     call_sequence = []
-    if first_seat in bid_col_by_seat and first_display:
-        call_sequence.append((first_seat, first_display))
-    if second_seat in bid_col_by_seat and second_display:
-        call_sequence.append((second_seat, second_display))
-    if third_seat in bid_col_by_seat and third_display:
-        call_sequence.append((third_seat, third_display))
-    if fourth_seat in bid_col_by_seat and fourth_display:
-        call_sequence.append((fourth_seat, fourth_display))
+    if isinstance(call_sequence_in, list) and call_sequence_in:
+        for item in call_sequence_in:
+            if not isinstance(item, dict):
+                continue
+            seat = item.get('dealer')
+            display = item.get('display_bid')
+            if seat in bid_col_by_seat and display:
+                call_sequence.append((seat, display))
+    else:
+        if first_seat in bid_col_by_seat and first_display:
+            call_sequence.append((first_seat, first_display))
+        if second_seat in bid_col_by_seat and second_display:
+            call_sequence.append((second_seat, second_display))
+        if third_seat in bid_col_by_seat and third_display:
+            call_sequence.append((third_seat, third_display))
+        if fourth_seat in bid_col_by_seat and fourth_display:
+            call_sequence.append((fourth_seat, fourth_display))
 
     # Place calls in auction order: move right on same row; wrap to next row when needed.
     cur_row = _BID_DATA_START_ROW

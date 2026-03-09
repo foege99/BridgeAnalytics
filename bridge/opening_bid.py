@@ -799,6 +799,38 @@ def _suggest_third_hand_after_partner_open(
             ],
         }
 
+    suit_lens = {
+        "S": int(ctx["spades"]),
+        "H": int(ctx["hearts"]),
+        "D": int(ctx["diamonds"]),
+        "C": int(ctx["clubs"]),
+    }
+
+    # After partner's level-2 minor support, probe 4-card majors before further minor raises.
+    if partner_strain in ("C", "D") and partner_lvl >= 2 and int(ctx["hcp"]) >= 10:
+        for major in ("H", "S"):
+            if suit_lens[major] < 4:
+                continue
+            if major in reserved:
+                continue
+            cand = _lowest_higher_bid_for_strain(highest_contract, major)
+            if cand is None:
+                continue
+            display = _to_display_bid(cand)
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": cand,
+                "display_bid": display,
+                "rule_id": "third_hand_minor_support_major_probe",
+                "explanation": "Viser 4-k major efter minor-støtte før yderligere minorhævning.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} major-probe: OK med {display} efter minor-støtte.",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: third_hand_minor_support_major_probe",
+                ],
+            }
+
     # Suit opening by partner: simple raise > new suit > pass.
     partner_len = int(ctx["spades"] if partner_strain == "S" else ctx["hearts"] if partner_strain == "H" else ctx["diamonds"] if partner_strain == "D" else ctx["clubs"])
 
@@ -820,12 +852,6 @@ def _suggest_third_hand_after_partner_open(
                 ],
             }
 
-    suit_lens = {
-        "S": int(ctx["spades"]),
-        "H": int(ctx["hearts"]),
-        "D": int(ctx["diamonds"]),
-        "C": int(ctx["clubs"]),
-    }
     best_new = None
     for s in sorted(("S", "H", "D", "C"), key=lambda x: (suit_lens[x], _strain_order(x)), reverse=True):
         if s == partner_strain:
@@ -871,8 +897,67 @@ def _suggest_third_hand_after_partner_open(
     }
 
 
+def _is_higher_contract(candidate_bid: str | None, reference_bid: str | None) -> bool:
+    cand = _parse_contract_bid(candidate_bid)
+    ref = _parse_contract_bid(reference_bid)
+    if cand is None:
+        return False
+    if ref is None:
+        return True
+    if cand[0] > ref[0]:
+        return True
+    if cand[0] == ref[0] and _strain_order(cand[1]) > _strain_order(ref[1]):
+        return True
+    return False
+
+
+def _legalize_competitive_contract(call: dict[str, Any], reference_bid: str | None, hand_tag: str) -> dict[str, Any]:
+    bid = str(call.get("bid") or "PASS").upper()
+    if bid in ("PASS", "PAS", "X", "DBL", "DOUBLE"):
+        return call
+
+    if _is_higher_contract(bid, reference_bid):
+        return call
+
+    parsed = _parse_contract_bid(bid)
+    if parsed is None:
+        return call
+
+    fixed = _lowest_higher_bid_for_strain(reference_bid, parsed[1])
+    if fixed is not None:
+        call["bid"] = fixed
+        call["display_bid"] = _to_display_bid(fixed)
+        call["rule_id"] = f"{call.get('rule_id', 'rule')}_legalized"
+        call["log_lines"] = list(call.get("log_lines") or []) + [
+            f"{hand_tag} justering: melding hævet til {call['display_bid']} for at være over seneste kontrakt.",
+        ]
+        return call
+
+    call["bid"] = "PASS"
+    call["display_bid"] = "PAS"
+    call["rule_id"] = "illegal_competitive_bid_pass"
+    call["log_lines"] = list(call.get("log_lines") or []) + [
+        f"{hand_tag} justering: ingen lovlig højere kontrakt, skifter til PAS.",
+    ]
+    return call
+
+
+def _prefixed_call_log_lines(call: Mapping[str, Any] | None) -> list[str]:
+    if not isinstance(call, Mapping):
+        return []
+    seat = _normalize_seat(call.get("dealer"))
+    if seat is None:
+        seat = "?"
+        side = "?"
+    else:
+        side = _seat_side(seat)
+    display = str(call.get("display_bid") or "PAS")
+    prefix = f"{side}/{seat}, {display}: "
+    return [prefix + str(line) for line in list(call.get("log_lines") or [])]
+
+
 def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    """Suggest first four calls in round 1: dealer, second, third, and fourth hand."""
+    """Suggest first two rounds (8 calls) using lightweight rule-based heuristics."""
     first = suggest_opening_for_row(row)
     first_seat = _normalize_seat(first.get("dealer"))
     second_seat = _next_seat(first_seat)
@@ -1001,42 +1086,104 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                         fourth_seat,
                         "4H fallback: ingen tolkelig kontrakt før 4H -> åbningssituation.",
                     )
+    first_round_calls = [first, second, third, fourth]
 
-    combined_log = [
-        f"Runde 1: 1H({first_seat if first_seat else '?'})={first.get('display_bid', 'PAS')}",
+    # --------------------------
+    # Round 2 (5H-8H)
+    # --------------------------
+    second_round_calls: list[dict[str, Any]] = []
+    round2_order = [
+        first_seat,
+        second.get("dealer") if isinstance(second, dict) else second_seat,
+        third.get("dealer") if isinstance(third, dict) else third_seat,
+        fourth.get("dealer") if isinstance(fourth, dict) else fourth_seat,
     ]
-    first_display = str(first.get("display_bid") or "PAS")
-    for line in list(first.get("log_lines") or []):
-        combined_log.append(f"{first_display} {line}")
 
-    if second is not None:
-        second_display = str(second.get("display_bid") or "PAS")
-        combined_log.append(
-            f"Runde 1: 2H({second.get('dealer', '?')})={second.get('display_bid', 'PAS')}"
-        )
-        for line in list(second.get("log_lines") or []):
-            combined_log.append(f"{second_display} {line}")
+    for idx, seat in enumerate(round2_order, start=5):
+        seat_norm = _normalize_seat(seat)
+        hand_tag = f"{idx}H"
+        if seat_norm is None:
+            continue
 
-    if third is not None:
-        third_display = str(third.get("display_bid") or "PAS")
-        combined_log.append(
-            f"Runde 1: 3H({third.get('dealer', '?')})={third.get('display_bid', 'PAS')}"
-        )
-        for line in list(third.get("log_lines") or []):
-            combined_log.append(f"{third_display} {line}")
+        prior_calls = [c for c in first_round_calls + second_round_calls if isinstance(c, dict)]
+        partner_seat = _partner_of(seat_norm)
 
-    if fourth is not None:
-        fourth_display = str(fourth.get("display_bid") or "PAS")
-        combined_log.append(
-            f"Runde 1: 4H({fourth.get('dealer', '?')})={fourth.get('display_bid', 'PAS')}"
+        partner_contract = None
+        opp_contracts: list[str] = []
+        own_contracts: list[str] = []
+
+        for c in prior_calls:
+            c_seat = _normalize_seat(c.get("dealer"))
+            c_bid = str(c.get("bid") or "PASS").upper()
+            if _parse_contract_bid(c_bid) is None or c_seat is None:
+                continue
+            if c_seat == partner_seat:
+                partner_contract = c_bid
+            if _seat_side(c_seat) == _seat_side(seat_norm):
+                own_contracts.append(c_bid)
+            else:
+                opp_contracts.append(c_bid)
+
+        highest_contract = _highest_contract_bid_text(*(own_contracts + opp_contracts))
+
+        # If nobody has bid a contract yet, this hand is in opening situation.
+        if highest_contract is None:
+            call = _opening_from_specific_seat(
+                row,
+                seat_norm,
+                f"{hand_tag} situation: ingen kontrakt endnu -> åbningssituation.",
+            )
+            second_round_calls.append(call)
+            continue
+
+        if partner_contract is not None:
+            opp_highest = _highest_contract_bid_text(*opp_contracts)
+            reserved = []
+            for b in opp_contracts:
+                p = _parse_contract_bid(b)
+                if p is not None:
+                    reserved.append(p[1])
+            call = _suggest_third_hand_after_partner_open(
+                row,
+                seat_norm,
+                partner_contract,
+                opp_highest,
+                hand_tag=hand_tag,
+                reserved_cuebid_strains=reserved,
+            )
+            call = _legalize_competitive_contract(call, highest_contract, hand_tag)
+            second_round_calls.append(call)
+            continue
+
+        # No partner contract seen: act competitively over current highest contract.
+        call = _suggest_second_hand_competitive(
+            row,
+            seat_norm,
+            highest_contract,
+            hand_tag=hand_tag,
         )
-        for line in list(fourth.get("log_lines") or []):
-            combined_log.append(f"{fourth_display} {line}")
+        call = _legalize_competitive_contract(call, highest_contract, hand_tag)
+        second_round_calls.append(call)
+
+    call_sequence = [c for c in first_round_calls + second_round_calls if isinstance(c, dict)]
+    combined_log: list[str] = []
+    for c in call_sequence:
+        combined_log.extend(_prefixed_call_log_lines(c))
+
+    fifth = second_round_calls[0] if len(second_round_calls) >= 1 else None
+    sixth = second_round_calls[1] if len(second_round_calls) >= 2 else None
+    seventh = second_round_calls[2] if len(second_round_calls) >= 3 else None
+    eighth = second_round_calls[3] if len(second_round_calls) >= 4 else None
 
     return {
         "first_call": first,
         "second_call": second,
         "third_call": third,
         "fourth_call": fourth,
+        "fifth_call": fifth,
+        "sixth_call": sixth,
+        "seventh_call": seventh,
+        "eighth_call": eighth,
+        "call_sequence": call_sequence,
         "log_lines": combined_log,
     }
