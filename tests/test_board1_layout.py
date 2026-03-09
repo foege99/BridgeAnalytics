@@ -724,6 +724,43 @@ def test_bid_scaffold_writes_opening_bid_for_dealer_east_nt_policy():
     assert ws.cell(row=21, column=4).value == '1NT'
 
 
+def test_bid_scaffold_opening_log_block_contains_context_and_choice():
+    """Opening decision log should be written below bidding table with a final choice line."""
+    df = _make_df(
+        dealer='N',
+        N_hand='AKQJ9.8765.3.K2',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=36, column=1).value == 'Åbningslog'
+
+    log_lines = [
+        str(ws.cell(row=r, column=1).value or '')
+        for r in range(37, 47)
+    ]
+    assert any('Kontekst:' in line for line in log_lines)
+    assert any('Valg: 1♠' in line for line in log_lines)
+
+
+def test_bid_scaffold_opening_log_shows_pas_for_weak_hand():
+    """Weak hand should produce PAS and the same final choice in the log block."""
+    df = _make_df(
+        dealer='S',
+        S_hand='T9842.83.742.953',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    log_lines = [
+        str(ws.cell(row=r, column=1).value or '')
+        for r in range(37, 47)
+    ]
+    assert any('Valg: PAS' in line for line in log_lines)
+
+
 def test_right_info_block_contract_fields():
     """Info block: Kontrakt at C2, Spilfører at C3, Udspil at C4, Resultat at C5."""
     df = _make_df(contract='4S', decl='N', lead='♥A', tricks=10)

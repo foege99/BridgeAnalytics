@@ -109,6 +109,13 @@ def _build_context(hand_dot: str) -> dict[str, Any]:
     }
 
 
+def _shape_text(ctx: Mapping[str, Any]) -> str:
+    return (
+        f"S{int(ctx['spades'])}-H{int(ctx['hearts'])}-"
+        f"D{int(ctx['diamonds'])}-C{int(ctx['clubs'])}"
+    )
+
+
 def _pick_profile(dealer: str, bundle: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
     profiles = (bundle.get("system_profiles", {}) or {}).get("system_profiles", {}) or {}
     match_cfg = (bundle.get("match_config", {}) or {}).get("match_config", {}) or {}
@@ -145,7 +152,11 @@ def _pick_system_def(profile_cfg: dict[str, Any], bundle: dict[str, Any]) -> dic
     return sys_lib.get(first_name, {}) or {}
 
 
-def _passes_opening_threshold(ctx: dict[str, Any], profile_cfg: dict[str, Any], sys_def: dict[str, Any]) -> bool:
+def _evaluate_opening_threshold(
+    ctx: dict[str, Any],
+    profile_cfg: dict[str, Any],
+    sys_def: dict[str, Any],
+) -> tuple[bool, str]:
     style = profile_cfg.get("opening_threshold_style")
     profiles = sys_def.get("opening_threshold_profiles", {}) or {}
     threshold_cfg = profiles.get(style) or profiles.get("nordic_default") or {}
@@ -153,7 +164,7 @@ def _passes_opening_threshold(ctx: dict[str, Any], profile_cfg: dict[str, Any], 
     rule = str(first_seat_cfg.get("rule") or "").strip()
 
     if not rule:
-        return True
+        return True, "Threshold: ingen specifik regel (OK)."
 
     if rule == "hcp_minimum":
         min_hcp = first_seat_cfg.get("min_hcp")
@@ -162,36 +173,53 @@ def _passes_opening_threshold(ctx: dict[str, Any], profile_cfg: dict[str, Any], 
             min_hcp = (
                 ((defs.get("hcp_minimum", {}) or {}).get("parameters", {}) or {}).get("min_hcp", 12)
             )
-        return int(ctx["hcp"]) >= int(min_hcp)
+        ok = int(ctx["hcp"]) >= int(min_hcp)
+        return ok, f"Threshold: HCP-minimum {int(ctx['hcp'])}>={int(min_hcp)} ({'OK' if ok else 'NEJ'})."
 
     if rule == "rule_of_20":
-        return int(ctx["hcp"]) + int(ctx["longest_1"]) + int(ctx["longest_2"]) >= 20
+        score = int(ctx["hcp"]) + int(ctx["longest_1"]) + int(ctx["longest_2"])
+        ok = score >= 20
+        return (
+            ok,
+            f"Threshold: Rule of 20 = {int(ctx['hcp'])}+{int(ctx['longest_1'])}+{int(ctx['longest_2'])}={score} ({'OK' if ok else 'NEJ'}).",
+        )
 
     if rule == "rule_of_15":
-        return int(ctx["hcp"]) + int(ctx["spades"]) >= 15
+        score = int(ctx["hcp"]) + int(ctx["spades"])
+        ok = score >= 15
+        return ok, f"Threshold: Rule of 15 = {int(ctx['hcp'])}+{int(ctx['spades'])}={score} ({'OK' if ok else 'NEJ'})."
 
     if rule == "light_open":
         longest = max(int(ctx["spades"]), int(ctx["hearts"]), int(ctx["diamonds"]), int(ctx["clubs"]))
-        return int(ctx["hcp"]) >= 8 and longest >= 5
+        ok = int(ctx["hcp"]) >= 8 and longest >= 5
+        return (
+            ok,
+            f"Threshold: light_open med HCP={int(ctx['hcp'])} og længste farve={longest} ({'OK' if ok else 'NEJ'}).",
+        )
 
     # Unknown threshold rule: conservative fallback.
-    return int(ctx["hcp"]) >= 12
+    ok = int(ctx["hcp"]) >= 12
+    return ok, f"Threshold: ukendt regel '{rule}', fallback HCP>=12 ({'OK' if ok else 'NEJ'})."
 
 
-def _evaluate_one_nt(ctx: dict[str, Any], profile_cfg: dict[str, Any], sys_def: dict[str, Any]) -> tuple[str | None, str | None]:
+def _evaluate_one_nt(
+    ctx: dict[str, Any],
+    profile_cfg: dict[str, Any],
+    sys_def: dict[str, Any],
+) -> tuple[str | None, str | None, str]:
     nt = ((sys_def.get("notrump_openings", {}) or {}).get("one_nt", {}) or {})
     strength = nt.get("strength", {}) or {}
     min_hcp = int(strength.get("min_hcp", 15))
     max_hcp = int(strength.get("max_hcp", 17))
 
     if not (min_hcp <= int(ctx["hcp"]) <= max_hcp):
-        return None, None
+        return None, None, f"1NT-check: afvist (HCP {int(ctx['hcp'])} udenfor {min_hcp}-{max_hcp})."
 
     shapes = sys_def.get("shape_definitions", {}) or {}
     shape_ref = nt.get("shape_reference", "balanced_shapes")
     allowed = shapes.get(shape_ref, shapes.get("balanced_shapes", []))
     if not _shape_matches(ctx["shape_shdc"], allowed):
-        return None, None
+        return None, None, f"1NT-check: afvist (shape {_shape_text(ctx)} er ikke balanceret)."
 
     policy = profile_cfg.get("one_nt_major_policy", "deny_any_5_card_major")
     spades = int(ctx["spades"])
@@ -199,19 +227,19 @@ def _evaluate_one_nt(ctx: dict[str, Any], profile_cfg: dict[str, Any], sys_def: 
 
     if policy == "allow_5m_except_opposite_major_doubleton":
         if (spades == 5 and hearts == 2) or (hearts == 5 and spades == 2):
-            return None, None
-        return "1NT", "one_nt_allow_5m_except_opposite_major_doubleton"
+            return None, None, "1NT-check: afvist (5-k major med modsatte major doubleton)."
+        return "1NT", "one_nt_allow_5m_except_opposite_major_doubleton", "1NT-check: OK under allow_5m-policy."
 
     if policy == "deny_any_5_card_major":
         if spades <= 4 and hearts <= 4:
-            return "1NT", "one_nt_deny_any_5_card_major"
-        return None, None
+            return "1NT", "one_nt_deny_any_5_card_major", "1NT-check: OK (ingen 5-k major)."
+        return None, None, "1NT-check: afvist (5-k major ikke tilladt under deny_any_5_card_major)."
 
     # Unknown NT policy: fallback to deny any 5-card major.
     if spades <= 4 and hearts <= 4:
-        return "1NT", "one_nt_fallback_deny_5m"
+        return "1NT", "one_nt_fallback_deny_5m", "1NT-check: OK via fallback-policy."
 
-    return None, None
+    return None, None, "1NT-check: afvist under fallback-policy."
 
 
 def _safe_eval_condition(expr: str, ctx: Mapping[str, Any]) -> bool:
@@ -255,14 +283,17 @@ def _evaluate_suit_opening(
     sys_def: dict[str, Any],
     logic_key: str,
     style_key: str,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, str]:
     style = profile_cfg.get(style_key)
     logic = sys_def.get(logic_key, []) or []
+    label = "Major" if style_key == "major_style" else "Minor"
+    style_block_found = False
 
     for block in logic:
         when = block.get("when", {}) or {}
         if when.get(style_key) != style:
             continue
+        style_block_found = True
 
         for rule in (block.get("rules", []) or []):
             cond = str(rule.get("condition") or "").strip()
@@ -271,7 +302,7 @@ def _evaluate_suit_opening(
 
             open_bid = rule.get("open")
             if isinstance(open_bid, str):
-                return open_bid, rule.get("id")
+                return open_bid, rule.get("id"), f"{label}-check: match {rule.get('id')} -> {_to_display_bid(open_bid)}."
 
             default_open = rule.get("default_open")
             if isinstance(default_open, str):
@@ -280,10 +311,12 @@ def _evaluate_suit_opening(
                 if _exception_matches(exc_if, ctx):
                     exc_open = exc.get("open")
                     if isinstance(exc_open, str):
-                        return exc_open, rule.get("id")
-                return default_open, rule.get("id")
+                        return exc_open, rule.get("id"), f"{label}-check: exception i {rule.get('id')} -> {_to_display_bid(exc_open)}."
+                return default_open, rule.get("id"), f"{label}-check: default i {rule.get('id')} -> {_to_display_bid(default_open)}."
 
-    return None, None
+    if not style_block_found:
+        return None, None, f"{label}-check: ingen regelblok for style '{style}'."
+    return None, None, f"{label}-check: ingen regel matchede."
 
 
 def suggest_opening_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -297,6 +330,12 @@ def suggest_opening_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "display_bid": "PAS",
             "rule_id": "dealer_unknown",
             "explanation": "Dealer mangler, bruger PAS som fallback.",
+            "log_lines": [
+                "Kontekst: dealer ukendt.",
+                "Valg: PAS",
+                "Regel-id: dealer_unknown",
+                "Forklaring: Dealer mangler, bruger PAS som fallback.",
+            ],
         }
 
     hand_col = f"{dealer}_hand"
@@ -309,12 +348,23 @@ def suggest_opening_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "display_bid": "PAS",
             "rule_id": "hand_missing",
             "explanation": f"Hånd mangler for {dealer}; bruger PAS.",
+            "log_lines": [
+                f"Kontekst: dealer={dealer}.",
+                f"Valg: PAS",
+                "Regel-id: hand_missing",
+                f"Forklaring: Hånd mangler for {dealer}; bruger PAS.",
+            ],
         }
 
     ctx = _build_context(str(hand_dot))
     bundle = _load_bundle()
     profile_name, profile_cfg = _pick_profile(dealer, bundle)
     sys_def = _pick_system_def(profile_cfg, bundle)
+
+    log_lines = [
+        f"Kontekst: dealer={dealer}, profil={profile_name if profile_name else '(ukendt)'}.",
+        f"Hånd: {int(ctx['hcp'])} HCP, shape {_shape_text(ctx)}.",
+    ]
 
     if not profile_cfg or not sys_def:
         return {
@@ -324,9 +374,16 @@ def suggest_opening_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "display_bid": "PAS",
             "rule_id": "system_missing",
             "explanation": "System/profil mangler; bruger PAS.",
+            "log_lines": log_lines + [
+                "Valg: PAS",
+                "Regel-id: system_missing",
+                "Forklaring: System/profil mangler; bruger PAS.",
+            ],
         }
 
-    if not _passes_opening_threshold(ctx, profile_cfg, sys_def):
+    threshold_ok, threshold_line = _evaluate_opening_threshold(ctx, profile_cfg, sys_def)
+    log_lines.append(threshold_line)
+    if not threshold_ok:
         return {
             "dealer": dealer,
             "profile": profile_name,
@@ -334,51 +391,80 @@ def suggest_opening_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "display_bid": "PAS",
             "rule_id": "threshold_fail",
             "explanation": "Åbningstærskel ikke opfyldt.",
+            "log_lines": log_lines + [
+                "Valg: PAS",
+                "Regel-id: threshold_fail",
+                "Forklaring: Åbningstærskel ikke opfyldt.",
+            ],
         }
 
-    nt_bid, nt_rule = _evaluate_one_nt(ctx, profile_cfg, sys_def)
+    nt_bid, nt_rule, nt_line = _evaluate_one_nt(ctx, profile_cfg, sys_def)
+    log_lines.append(nt_line)
     if nt_bid:
+        display = _to_display_bid(nt_bid)
         return {
             "dealer": dealer,
             "profile": profile_name,
             "bid": nt_bid,
-            "display_bid": _to_display_bid(nt_bid),
+            "display_bid": display,
             "rule_id": nt_rule,
             "explanation": "1NT opfylder styrke-, form- og profilkrav.",
+            "log_lines": log_lines + [
+                "Major-check: ikke vurderet (1NT valgt).",
+                "Minor-check: ikke vurderet (1NT valgt).",
+                f"Valg: {display}",
+                f"Regel-id: {nt_rule}",
+                "Forklaring: 1NT opfylder styrke-, form- og profilkrav.",
+            ],
         }
 
-    major_bid, major_rule = _evaluate_suit_opening(
+    major_bid, major_rule, major_line = _evaluate_suit_opening(
         ctx,
         profile_cfg,
         sys_def,
         logic_key="major_opening_logic",
         style_key="major_style",
     )
+    log_lines.append(major_line)
     if major_bid:
+        display = _to_display_bid(major_bid)
         return {
             "dealer": dealer,
             "profile": profile_name,
             "bid": major_bid,
-            "display_bid": _to_display_bid(major_bid),
+            "display_bid": display,
             "rule_id": major_rule,
             "explanation": "Naturlig major-åbning valgt fra profilregler.",
+            "log_lines": log_lines + [
+                "Minor-check: ikke vurderet (major valgt).",
+                f"Valg: {display}",
+                f"Regel-id: {major_rule}",
+                "Forklaring: Naturlig major-åbning valgt fra profilregler.",
+            ],
         }
 
-    minor_bid, minor_rule = _evaluate_suit_opening(
+    minor_bid, minor_rule, minor_line = _evaluate_suit_opening(
         ctx,
         profile_cfg,
         sys_def,
         logic_key="minor_opening_logic",
         style_key="minor_style",
     )
+    log_lines.append(minor_line)
     if minor_bid:
+        display = _to_display_bid(minor_bid)
         return {
             "dealer": dealer,
             "profile": profile_name,
             "bid": minor_bid,
-            "display_bid": _to_display_bid(minor_bid),
+            "display_bid": display,
             "rule_id": minor_rule,
             "explanation": "Naturlig minor-åbning valgt fra profilregler.",
+            "log_lines": log_lines + [
+                f"Valg: {display}",
+                f"Regel-id: {minor_rule}",
+                "Forklaring: Naturlig minor-åbning valgt fra profilregler.",
+            ],
         }
 
     return {
@@ -388,4 +474,9 @@ def suggest_opening_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "display_bid": "PAS",
         "rule_id": "no_opening_rule_matched",
         "explanation": "Ingen åbning matchede; bruger PAS.",
+        "log_lines": log_lines + [
+            "Valg: PAS",
+            "Regel-id: no_opening_rule_matched",
+            "Forklaring: Ingen åbning matchede; bruger PAS.",
+        ],
     }

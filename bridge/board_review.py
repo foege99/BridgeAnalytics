@@ -420,6 +420,7 @@ def write_board1_layout_sheet(
     _BID_HDR_ROW = 20
     _BID_DATA_START_ROW = 21
     _BID_DATA_ROWS = 12
+    _BID_LOG_START_ROW = _BID_DATA_START_ROW + _BID_DATA_ROWS + 3  # ~15 rows below header
     _BID_START_COL = 1  # A
     _BID_HEADERS = ['S', 'V', 'N', 'Ø']
     _BID_LIGHT_GREEN = 'EAF2E3'
@@ -453,6 +454,7 @@ def write_board1_layout_sheet(
     opening_guess = suggest_opening_for_row(per_row)
     opening_dealer = opening_guess.get('dealer')
     opening_display_bid = opening_guess.get('display_bid')
+    opening_log_lines = opening_guess.get('log_lines') if isinstance(opening_guess, dict) else []
     bid_col_by_seat = {'S': 1, 'V': 2, 'N': 3, 'Ø': 4}
     if opening_dealer in bid_col_by_seat and opening_display_bid:
         ws.cell(
@@ -460,6 +462,33 @@ def write_board1_layout_sheet(
             column=bid_col_by_seat[opening_dealer],
             value=opening_display_bid,
         )
+
+    # Opening decision log block shown below the bidding table.
+    if isinstance(opening_log_lines, list) and opening_log_lines:
+        ws.merge_cells(
+            start_row=_BID_LOG_START_ROW,
+            start_column=1,
+            end_row=_BID_LOG_START_ROW,
+            end_column=4,
+        )
+        log_hdr = ws.cell(row=_BID_LOG_START_ROW, column=1, value='Åbningslog')
+        if Font is not None:
+            log_hdr.font = Font(bold=True)
+        if _styles_available:
+            log_hdr.alignment = Alignment(horizontal='left', vertical='center')
+            log_hdr.fill = PatternFill(fill_type='solid', fgColor=_BID_LIGHT_GREEN)
+            if thin_bid:
+                log_hdr.border = Border(left=thin_bid, right=thin_bid, top=thin_bid, bottom=thin_bid)
+
+        for idx, line in enumerate(opening_log_lines[:10], start=1):
+            r_log = _BID_LOG_START_ROW + idx
+            ws.merge_cells(start_row=r_log, start_column=1, end_row=r_log, end_column=4)
+            log_cell = ws.cell(row=r_log, column=1)
+            _write_with_red_suits(log_cell, str(line))
+            if _styles_available:
+                log_cell.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+                if thin_bid:
+                    log_cell.border = Border(left=thin_bid, right=thin_bid, top=thin_bid, bottom=thin_bid)
 
     # Body rows A21:D32 (light green background).
     # If bid text is present later, ensure hearts/diamonds render red.
