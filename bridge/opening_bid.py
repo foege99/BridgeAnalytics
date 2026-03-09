@@ -542,6 +542,134 @@ def _is_two_over_one_gf_enabled_for_seat(seat: str) -> bool:
     return _profile_bool_flag(profile_cfg, "two_over_one_game_force", False)
 
 
+def _system_def_for_seat(seat: str) -> dict[str, Any]:
+    bundle = _load_bundle()
+    _, profile_cfg = _pick_profile(seat, bundle)
+    return _pick_system_def(profile_cfg, bundle)
+
+
+def _hand_strength_model_for_seat(seat: str) -> dict[str, Any]:
+    sys_def = _system_def_for_seat(seat)
+    return (sys_def.get("hand_strength_model", {}) or {}) if isinstance(sys_def, Mapping) else {}
+
+
+def _hcp_bounds_from_spec(spec: Mapping[str, Any] | None, default_low: int, default_high: int) -> tuple[int, int]:
+    if not isinstance(spec, Mapping):
+        return default_low, default_high
+    rng = spec.get("hcp_range")
+    if isinstance(rng, list) and len(rng) >= 2:
+        try:
+            lo = int(rng[0])
+            hi = int(rng[1])
+            return lo, hi
+        except Exception:
+            pass
+    lo = spec.get("hcp_min", default_low)
+    hi = spec.get("hcp_max", default_high)
+    try:
+        return int(lo), int(hi)
+    except Exception:
+        return default_low, default_high
+
+
+def _opener_strength_bucket_for_hcp(seat: str, hcp: int) -> str:
+    model = _hand_strength_model_for_seat(seat)
+    buckets = (model.get("opener_strength_buckets", {}) or {}) if isinstance(model, Mapping) else {}
+
+    weak_low, weak_high = _hcp_bounds_from_spec(buckets.get("weak"), 12, 14)
+    med_low, med_high = _hcp_bounds_from_spec(buckets.get("medium"), 15, 17)
+    strong_low, _ = _hcp_bounds_from_spec(buckets.get("strong"), 18, 37)
+
+    if weak_low <= int(hcp) <= weak_high:
+        return "weak"
+    if med_low <= int(hcp) <= med_high:
+        return "medium"
+    if int(hcp) >= strong_low:
+        return "strong"
+    return "weak" if int(hcp) <= weak_high else "medium"
+
+
+def _responder_strength_bucket_for_hcp(seat: str, hcp: int) -> str:
+    model = _hand_strength_model_for_seat(seat)
+    buckets = (model.get("responder_strength_buckets", {}) or {}) if isinstance(model, Mapping) else {}
+
+    weak_low, weak_high = _hcp_bounds_from_spec(buckets.get("weak"), 6, 9)
+    inv_low, inv_high = _hcp_bounds_from_spec(buckets.get("invitational"), 10, 12)
+    forcing_low, _ = _hcp_bounds_from_spec(buckets.get("forcing_plus"), 13, 37)
+
+    if weak_low <= int(hcp) <= weak_high:
+        return "weak"
+    if inv_low <= int(hcp) <= inv_high:
+        return "invitational"
+    if int(hcp) >= forcing_low:
+        return "forcing_plus"
+    return "weak" if int(hcp) <= weak_high else "invitational"
+
+
+def _sequence_rules_for_seat(seat: str) -> dict[str, Any]:
+    model = _hand_strength_model_for_seat(seat)
+    if not isinstance(model, Mapping):
+        return {}
+    rules = model.get("responder_sequence_rules", {}) or {}
+    return rules if isinstance(rules, Mapping) else {}
+
+
+def _one_nt_over_minor_params_for_seat(seat: str) -> tuple[int, int, str, bool]:
+    rules = _sequence_rules_for_seat(seat)
+    spec = (rules.get("one_minor_one_nt", {}) or {}) if isinstance(rules, Mapping) else {}
+    low, high = _hcp_bounds_from_spec(spec, 6, 10)
+    forcing = str(spec.get("forcing") or "non_forcing")
+    limited = bool(spec.get("responder_limited", True))
+
+    if _is_two_over_one_gf_enabled_for_seat(seat):
+        alt = spec.get("if_two_over_one_game_force", {}) or {}
+        alt_low, alt_high = _hcp_bounds_from_spec(alt, low, high)
+        low, high = alt_low, alt_high
+        if alt.get("forcing"):
+            forcing = str(alt.get("forcing"))
+    return low, high, forcing, limited
+
+
+def _one_nt_over_major_params_for_seat(seat: str) -> tuple[int, int, str, bool]:
+    rules = _sequence_rules_for_seat(seat)
+    spec = (rules.get("one_major_one_nt", {}) or {}) if isinstance(rules, Mapping) else {}
+    low, high = _hcp_bounds_from_spec(spec, 6, 9)
+    forcing = str(spec.get("forcing") or "non_forcing")
+    limited = bool(spec.get("responder_limited", True))
+
+    if _is_two_over_one_gf_enabled_for_seat(seat):
+        alt = spec.get("if_two_over_one_game_force", {}) or {}
+        alt_low, alt_high = _hcp_bounds_from_spec(alt, low, high)
+        low, high = alt_low, alt_high
+        if alt.get("forcing"):
+            forcing = str(alt.get("forcing"))
+    return low, high, forcing, limited
+
+
+def _one_diamond_one_spade_forcing_rule_for_seat(seat: str) -> tuple[int, str, bool]:
+    rules = _sequence_rules_for_seat(seat)
+    spec = (rules.get("one_diamond_one_spade", {}) or {}) if isinstance(rules, Mapping) else {}
+    try:
+        hcp_min = int(spec.get("hcp_min", 6))
+    except Exception:
+        hcp_min = 6
+    forcing = str(spec.get("forcing") or "one_round")
+    limited = bool(spec.get("responder_limited", False))
+    return hcp_min, forcing, limited
+
+
+def _latest_side_contract_in_state(state: Any, seat: str) -> tuple[str, int, str] | None:
+    for prev in reversed(list(state.calls or [])):
+        prev_seat = _normalize_seat(getattr(prev, "seat", None))
+        if prev_seat is None or _seat_side(prev_seat) != _seat_side(seat):
+            continue
+        parsed = _parse_contract_bid(getattr(prev, "bid", None))
+        if parsed is None:
+            continue
+        return prev_seat, parsed[0], parsed[1]
+    return None
+
+
 def _side_contract_history(
     prior_calls: list[Mapping[str, Any]],
     seat: str,
@@ -877,11 +1005,192 @@ def _suggest_third_hand_after_partner_open(
         reserved_txt = "/".join(_to_display_bid(f"1{s}")[1:] for s in sorted(reserved, key=_strain_order))
         log_lines.append(f"{hand_tag} note: cuebid-farver reserveret ({reserved_txt}).")
 
+    suit_lens = {
+        "S": int(ctx["spades"]),
+        "H": int(ctx["hearts"]),
+        "D": int(ctx["diamonds"]),
+        "C": int(ctx["clubs"]),
+    }
+
     side_history = _side_contract_history(list(prior_calls or []), third_seat)
     fourth_unbid = _infer_fourth_unbid_suit_from_side_history(side_history)
     fsf_enabled = _is_fourth_suit_forcing_enabled_for_seat(third_seat)
     two_over_one_enabled = _is_two_over_one_gf_enabled_for_seat(third_seat)
     side_has_2o1_dhs = _side_has_two_over_one_dhs(side_history)
+    opp_has_contract = _parse_contract_bid(second_call_bid) is not None
+
+    side_opening = side_history[0] if side_history else None
+    side_response = side_history[1] if len(side_history) >= 2 else None
+    open_seat = side_opening[0] if side_opening is not None else None
+    open_lvl = side_opening[1] if side_opening is not None else None
+    open_strain = side_opening[2] if side_opening is not None else None
+    resp_seat = side_response[0] if side_response is not None else None
+    resp_lvl = side_response[1] if side_response is not None else None
+    resp_strain = side_response[2] if side_response is not None else None
+
+    current_is_responder_first = (
+        side_opening is not None
+        and len(side_history) == 1
+        and open_seat != third_seat
+    )
+    current_is_opener_rebid = (
+        side_opening is not None
+        and side_response is not None
+        and open_seat == third_seat
+        and resp_seat != third_seat
+    )
+
+    # Responder first call: 1m-1NT limited range (non-forcing by default).
+    if (
+        not opp_has_contract
+        and current_is_responder_first
+        and open_lvl == 1
+        and open_strain in ("C", "D")
+    ):
+        one_nt_low, one_nt_high, one_nt_forcing, _ = _one_nt_over_minor_params_for_seat(third_seat)
+        partner_minor_len = int(ctx["clubs"] if open_strain == "C" else ctx["diamonds"])
+        no_four_card_major = suit_lens["S"] < 4 and suit_lens["H"] < 4
+        if (
+            no_four_card_major
+            and partner_minor_len <= 3
+            and one_nt_low <= int(ctx["hcp"]) <= one_nt_high
+        ):
+            cand_nt = _lowest_higher_bid_for_strain(highest_contract, "NT")
+            if cand_nt is not None:
+                display = _to_display_bid(cand_nt)
+                responder_bucket = _responder_strength_bucket_for_hcp(third_seat, int(ctx["hcp"]))
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": cand_nt,
+                    "display_bid": display,
+                    "rule_id": "responder_one_nt_over_minor_limited",
+                    "explanation": "Svarer 1NT over minor med begrænset styrkeinterval.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} styrke: svarhånd bucket={responder_bucket} ({int(ctx['hcp'])} HCP).",
+                        f"{hand_tag} regel: 1m-1NT viser cirka {one_nt_low}-{one_nt_high} HCP ({one_nt_forcing}).",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: responder_one_nt_over_minor_limited",
+                    ],
+                }
+
+    # Opener rebid after 1m-1NT with responder limited range.
+    if (
+        not opp_has_contract
+        and current_is_opener_rebid
+        and open_lvl == 1
+        and open_strain in ("C", "D")
+        and resp_lvl == 1
+        and resp_strain == "NT"
+    ):
+        one_nt_low, one_nt_high, one_nt_forcing, _ = _one_nt_over_minor_params_for_seat(third_seat)
+        opener_bucket = _opener_strength_bucket_for_hcp(third_seat, int(ctx["hcp"]))
+
+        if opener_bucket == "weak" and one_nt_forcing == "non_forcing":
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": "PASS",
+                "display_bid": "PAS",
+                "rule_id": "opener_rebid_after_1m_1nt_weak_pass",
+                "explanation": "Åbner passer med minimum mod begrænset 1NT-svar.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} styrke: åbner bucket=weak ({int(ctx['hcp'])} HCP).",
+                    f"{hand_tag} note: svarhånd begrænset til cirka {one_nt_low}-{one_nt_high} HCP.",
+                    f"{hand_tag} valg: PAS",
+                    f"{hand_tag} regel-id: opener_rebid_after_1m_1nt_weak_pass",
+                ],
+            }
+
+        if opener_bucket == "medium":
+            cand_nt = _lowest_higher_bid_for_strain(highest_contract, "NT")
+            if cand_nt is not None:
+                display = _to_display_bid(cand_nt)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": cand_nt,
+                    "display_bid": display,
+                    "rule_id": "opener_rebid_after_1m_1nt_medium_invite",
+                    "explanation": "Åbner inviterer videre over begrænset 1NT-svar.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} styrke: åbner bucket=medium ({int(ctx['hcp'])} HCP).",
+                        f"{hand_tag} note: svarhånd begrænset til cirka {one_nt_low}-{one_nt_high} HCP.",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: opener_rebid_after_1m_1nt_medium_invite",
+                    ],
+                }
+
+        if opener_bucket == "strong":
+            if _is_higher_contract("3NT", highest_contract):
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": "3NT",
+                    "display_bid": "3NT",
+                    "rule_id": "opener_rebid_after_1m_1nt_strong_game",
+                    "explanation": "Åbner går i udgang over begrænset 1NT-svar.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} styrke: åbner bucket=strong ({int(ctx['hcp'])} HCP).",
+                        f"{hand_tag} note: svarhånd begrænset til cirka {one_nt_low}-{one_nt_high} HCP.",
+                        f"{hand_tag} valg: 3NT",
+                        f"{hand_tag} regel-id: opener_rebid_after_1m_1nt_strong_game",
+                    ],
+                }
+
+    # Opener rebid after 1M-2M: weak pass, medium 3M invite, strong 4M.
+    if (
+        not opp_has_contract
+        and current_is_opener_rebid
+        and open_lvl == 1
+        and open_strain in ("H", "S")
+        and resp_lvl == 2
+        and resp_strain == open_strain
+    ):
+        opener_bucket = _opener_strength_bucket_for_hcp(third_seat, int(ctx["hcp"]))
+
+        if opener_bucket == "weak":
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": "PASS",
+                "display_bid": "PAS",
+                "rule_id": "opener_rebid_after_1M_2M_weak_pass",
+                "explanation": "Åbner signoff med svag hånd efter enkel højning.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} styrke: åbner bucket=weak ({int(ctx['hcp'])} HCP).",
+                    f"{hand_tag} valg: PAS",
+                    f"{hand_tag} regel-id: opener_rebid_after_1M_2M_weak_pass",
+                ],
+            }
+
+        target = f"3{open_strain}" if opener_bucket == "medium" else f"4{open_strain}"
+        if _is_higher_contract(target, highest_contract):
+            display = _to_display_bid(target)
+            rid = "opener_rebid_after_1M_2M_medium_invite" if opener_bucket == "medium" else "opener_rebid_after_1M_2M_strong_game"
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": target,
+                "display_bid": display,
+                "rule_id": rid,
+                "explanation": "Åbner viser styrkeklasse efter 1M-2M.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} styrke: åbner bucket={opener_bucket} ({int(ctx['hcp'])} HCP).",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: {rid}",
+                ],
+            }
+
+    force_rebid_after_1d_1s = (
+        not opp_has_contract
+        and current_is_opener_rebid
+        and open_lvl == 1
+        and open_strain == "D"
+        and resp_lvl == 1
+        and resp_strain == "S"
+        and _one_diamond_one_spade_forcing_rule_for_seat(third_seat)[1] in ("one_round", "game_force")
+    )
 
     # Reply to partner's prior fourth-suit forcing ask.
     partner_last = _latest_partner_contract_call(list(prior_calls or []), third_seat)
@@ -991,13 +1300,6 @@ def _suggest_third_hand_after_partner_open(
             ],
         }
 
-    suit_lens = {
-        "S": int(ctx["spades"]),
-        "H": int(ctx["hearts"]),
-        "D": int(ctx["diamonds"]),
-        "C": int(ctx["clubs"]),
-    }
-
     # After partner's level-2 minor support, probe 4-card majors before further minor raises.
     if partner_strain in ("C", "D") and partner_lvl >= 2 and int(ctx["hcp"]) >= 10:
         for major in ("H", "S"):
@@ -1074,6 +1376,43 @@ def _suggest_third_hand_after_partner_open(
             ],
         }
 
+    if force_rebid_after_1d_1s:
+        cand_nt = _lowest_higher_bid_for_strain(highest_contract, "NT")
+        if cand_nt is not None:
+            display = _to_display_bid(cand_nt)
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": cand_nt,
+                "display_bid": display,
+                "rule_id": "opener_rebid_after_1d_1s_forced_rebid",
+                "explanation": "1D-1S er forcerende én runde; åbner skal byde igen.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} regel: 1♦-1♠ er forcerende én runde; PAS ikke tilladt.",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: opener_rebid_after_1d_1s_forced_rebid",
+                ],
+            }
+
+        for suit in ("C", "D", "H", "S"):
+            cand = _lowest_higher_bid_for_strain(highest_contract, suit)
+            if cand is None:
+                continue
+            display = _to_display_bid(cand)
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": cand,
+                "display_bid": display,
+                "rule_id": "opener_rebid_after_1d_1s_forced_rebid",
+                "explanation": "1D-1S er forcerende én runde; åbner skal byde igen.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} regel: 1♦-1♠ er forcerende én runde; PAS ikke tilladt.",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: opener_rebid_after_1d_1s_forced_rebid",
+                ],
+            }
+
     return {
         "dealer": third_seat,
         "profile": None,
@@ -1142,6 +1481,7 @@ def _infer_public_bid_evidence(state: Any, seat: str, bid: str) -> BidEvidence:
     btxt = str(bid or "PASS").strip().upper().replace(" ", "")
     evidence = BidEvidence(source=f"offentlig melding {seat}:{_to_display_bid(btxt)}")
     parsed = _parse_contract_bid(btxt)
+    latest_side_contract = _latest_side_contract_in_state(state, seat)
 
     if btxt in ("PASS", "PAS"):
         if state.highest_contract is None:
@@ -1162,6 +1502,51 @@ def _infer_public_bid_evidence(state: Any, seat: str, bid: str) -> BidEvidence:
         return evidence
 
     level, strain = parsed
+
+    if (
+        strain == "NT"
+        and level == 1
+        and latest_side_contract is not None
+        and latest_side_contract[0] != seat
+        and latest_side_contract[1] == 1
+        and latest_side_contract[2] in ("C", "D")
+    ):
+        low, high, forcing, limited = _one_nt_over_minor_params_for_seat(seat)
+        evidence.hcp_range = ValueRange(float(low), float(high))
+        evidence.notes.append(f"1NT over minor: {low}-{high} HCP ({forcing}).")
+        if limited:
+            evidence.notes.append("Responder is limited by agreement in this sequence.")
+        return evidence
+
+    if (
+        strain == "NT"
+        and level == 1
+        and latest_side_contract is not None
+        and latest_side_contract[0] != seat
+        and latest_side_contract[1] == 1
+        and latest_side_contract[2] in ("H", "S")
+    ):
+        low, high, forcing, limited = _one_nt_over_major_params_for_seat(seat)
+        evidence.hcp_range = ValueRange(float(low), float(high))
+        evidence.notes.append(f"1NT over major: {low}-{high} HCP ({forcing}).")
+        if limited:
+            evidence.notes.append("Responder is limited by agreement in this sequence.")
+        return evidence
+
+    if (
+        level == 1
+        and strain == "S"
+        and latest_side_contract is not None
+        and latest_side_contract[0] != seat
+        and latest_side_contract[1] == 1
+        and latest_side_contract[2] == "D"
+    ):
+        hcp_min, forcing, limited = _one_diamond_one_spade_forcing_rule_for_seat(seat)
+        evidence.natural_strain = "S"
+        evidence.suit_min["S"] = 4
+        evidence.hcp_range = ValueRange(float(hcp_min), 37.0)
+        evidence.notes.append(f"1D-1S: min {hcp_min} HCP, {forcing}, limited={limited}.")
+        return evidence
 
     if strain == "NT":
         if level == 1:

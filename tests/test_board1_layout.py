@@ -57,6 +57,17 @@ def _make_df(**overrides):
     return pd.DataFrame([row])
 
 
+def _find_call(seq, seat, seat_call_no):
+    seat_u = str(seat).upper()
+    for c in seq:
+        if str(c.get('dealer') or '').upper() != seat_u:
+            continue
+        if int(c.get('seat_call_no') or 0) != int(seat_call_no):
+            continue
+        return c
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Unit tests for _hand_suit_lines
 # ---------------------------------------------------------------------------
@@ -993,6 +1004,104 @@ def test_auction_range_ceiling_prevents_level_7_runaway():
 
     assert levels, 'Expected at least one contract bid in sequence.'
     assert max(levels) <= 5
+
+
+def test_responder_one_nt_over_minor_limited_and_opener_weak_passes():
+    """1m-1NT should be limited and opener should pass with weak opener bucket."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'KQ3.A84.AJT73.52',
+        'Ø_hand': 'T762.953.9862.84',
+        'S_hand': 'J83.KQ2.742.AQ83',
+        'V_hand': '954.QJT7.K5.T976',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    s_first = _find_call(seq, 'S', 1)
+    n_second = _find_call(seq, 'N', 2)
+    assert s_first is not None
+    assert n_second is not None
+    assert str(s_first.get('display_bid')) == '1NT'
+    assert str(s_first.get('rule_id')) == 'responder_one_nt_over_minor_limited'
+    assert str(n_second.get('display_bid')) == 'PAS'
+    assert str(n_second.get('rule_id')) == 'opener_rebid_after_1m_1nt_weak_pass'
+
+
+def test_one_diamond_one_spade_forces_opener_rebid():
+    """Sequence 1D-1S is one-round forcing; opener should not pass immediately."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'KQ.A84.AJT73.652',
+        'Ø_hand': 'T762.953.9862.84',
+        'S_hand': 'AQ875.62.74.Q83',
+        'V_hand': '954.QJT7.K5.T976',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    s_first = _find_call(seq, 'S', 1)
+    n_second = _find_call(seq, 'N', 2)
+    assert s_first is not None
+    assert n_second is not None
+    assert str(s_first.get('display_bid')) == '1♠'
+    assert str(n_second.get('display_bid')) != 'PAS'
+
+
+def test_opener_rebid_after_single_major_raise_weak_signoff():
+    """After 1M-2M, weak opener bucket signs off."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'KQJ85.K4.AJ6.742',
+        'Ø_hand': 'T762.953.9862.84',
+        'S_hand': 'A73.KJ8.T73.QT73',
+        'V_hand': '954.QT62.KQ54.95',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    n_second = _find_call(seq, 'N', 2)
+    assert n_second is not None
+    assert str(n_second.get('display_bid')) == 'PAS'
+    assert str(n_second.get('rule_id')) == 'opener_rebid_after_1M_2M_weak_pass'
+
+
+def test_opener_rebid_after_single_major_raise_medium_invite():
+    """After 1M-2M, medium opener bucket invites with 3M."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'AKJ85.K4.AJ6.742',
+        'Ø_hand': 'T762.953.9862.84',
+        'S_hand': 'Q73.QJ8.T73.QT73',
+        'V_hand': '954.T762.KQ54.95',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    n_second = _find_call(seq, 'N', 2)
+    assert n_second is not None
+    assert str(n_second.get('display_bid')) == '3♠'
+    assert str(n_second.get('rule_id')) == 'opener_rebid_after_1M_2M_medium_invite'
+
+
+def test_opener_rebid_after_single_major_raise_strong_game():
+    """After 1M-2M, strong opener bucket bids game directly."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'AKQJ9.AK7.KQ4.32',
+        'Ø_hand': 'T762.953.9862.84',
+        'S_hand': 'K83.QJ8.T73.QT73',
+        'V_hand': '954.T762.J854.95',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    n_second = _find_call(seq, 'N', 2)
+    assert n_second is not None
+    assert str(n_second.get('display_bid')) == '4♠'
+    assert str(n_second.get('rule_id')) == 'opener_rebid_after_1M_2M_strong_game'
 
 
 def test_fourth_suit_forcing_prefers_3nt_with_stopper():

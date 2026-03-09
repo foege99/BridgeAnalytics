@@ -1242,6 +1242,84 @@ system_library:
           treatment: fourth_suit_natural
           note: "When 2-over-1 game force is active and 2-over-1 in D/H/S has already been shown, fourth suit is natural."
 
+    hand_strength_model:
+
+      opener_strength_buckets:
+        weak:
+          hcp_range: [12,14]
+          description: "Minimum opening strength"
+        medium:
+          hcp_range: [15,17]
+          description: "Middle opening strength"
+        strong:
+          hcp_min: 18
+          description: "Strong opening strength"
+
+      responder_strength_buckets:
+        weak:
+          hcp_range: [6,9]
+          description: "Minimum constructive response"
+        invitational:
+          hcp_range: [10,12]
+          description: "Invitational responder values"
+        forcing_plus:
+          hcp_min: 13
+          description: "Game-forcing or better responder strength"
+
+      responder_sequence_rules:
+
+        one_minor_one_nt:
+          openings: ["1C", "1D"]
+          default_hcp_range: [6,10]
+          forcing: non_forcing
+          responder_limited: true
+          deny_four_card_major: true
+          if_two_over_one_game_force:
+            hcp_range: [6,12]
+            forcing: non_forcing
+
+        one_major_one_nt:
+          openings: ["1H", "1S"]
+          default_hcp_range: [6,9]
+          forcing: non_forcing
+          responder_limited: true
+          if_two_over_one_game_force:
+            hcp_range: [6,12]
+            forcing: one_round
+
+        one_diamond_one_spade:
+          opening: "1D"
+          response: "1S"
+          hcp_min: 6
+          forcing: one_round
+          responder_limited: false
+
+      opener_rebids:
+
+        after_one_major_two_major_raise:
+          sequence: "1M-2M"
+          weak_action:
+            rebid: pass
+            meaning: minimum_signoff
+          medium_action:
+            rebid: raise_to_three_major
+            meaning: invitational
+          strong_action:
+            rebid: raise_to_game_major
+            meaning: to_play_game
+
+        after_one_minor_one_nt:
+          sequence: "1m-1NT"
+          weak_action:
+            rebid: pass
+            meaning: minimum_signoff_against_limited_hand
+          medium_action:
+            rebid: invite_with_2NT
+            meaning: invitational
+          strong_action:
+            rebid: bid_3NT
+            meaning: to_play_game
+
     competitive_bidding:
 
       overcalls:
