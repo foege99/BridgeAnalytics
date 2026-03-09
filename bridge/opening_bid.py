@@ -946,13 +946,15 @@ def _prefixed_call_log_lines(call: Mapping[str, Any] | None) -> list[str]:
     if not isinstance(call, Mapping):
         return []
     seat = _normalize_seat(call.get("dealer"))
-    if seat is None:
-        seat = "?"
-        side = "?"
-    else:
-        side = _seat_side(seat)
+    seat_display_map = {
+        "N": "N",
+        "Ø": "Ø",
+        "S": "S",
+        "V": "Vest",
+    }
+    seat_display = seat_display_map.get(seat, "?")
     display = str(call.get("display_bid") or "PAS")
-    prefix = f"{side}/{seat}, {display}: "
+    prefix = f"{seat_display}, {display}: "
     return [prefix + str(line) for line in list(call.get("log_lines") or [])]
 
 
