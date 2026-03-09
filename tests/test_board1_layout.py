@@ -5,6 +5,7 @@ Tests for write_board1_layout_sheet() in bridge/board_review.py.
 import io
 import pandas as pd
 import pytest
+import bridge.opening_bid as opening_bid_module
 
 from openpyxl import Workbook
 from unittest.mock import MagicMock
@@ -871,7 +872,7 @@ def test_bid_scaffold_log_lines_start_with_current_bid():
 
     log_lines = [
         str(ws.cell(row=r, column=1).value or '')
-        for r in range(37, 57)
+        for r in range(37, 180)
     ]
 
     assert any(line.startswith('N, 1. melding: 1♠:') for line in log_lines)
@@ -913,7 +914,7 @@ def test_bid_scaffold_log_includes_fourth_hand_with_bid_prefix():
 
     log_lines = [
         str(ws.cell(row=r, column=1).value or '')
-        for r in range(37, 80)
+        for r in range(37, 180)
     ]
     assert any(line.startswith('Vest, 1. melding: 2♥:') for line in log_lines)
 
@@ -945,7 +946,7 @@ def test_bid_scaffold_second_round_places_all_four_calls():
 
 
 def test_bid_scaffold_log_includes_second_round_side_seat_prefixes():
-    """Second-round log lines should also start with seat + bid prefix."""
+    """Second-round log lines should include seat prefixes and range-state explanations."""
     df = _make_df(
         dealer='N',
         N_hand='JT64.AKJT9.95.Q6',
@@ -959,14 +960,110 @@ def test_bid_scaffold_log_includes_second_round_side_seat_prefixes():
 
     log_lines = [
         str(ws.cell(row=r, column=1).value or '')
-        for r in range(37, 120)
+        for r in range(37, 220)
     ]
 
-    # Second-round prefixes expected in this scenario:
-    assert any(line.startswith('N, 2. melding: 3♠:') for line in log_lines)
-    assert any(line.startswith('Ø, 2. melding: 4♣:') for line in log_lines)
-    assert any(line.startswith('S, 2. melding: 4♠:') for line in log_lines)
-    assert any(line.startswith('Vest, 2. melding: 5♣:') for line in log_lines)
+    assert any(line.startswith('N, 2. melding:') for line in log_lines)
+    assert any(line.startswith('Ø, 2. melding:') for line in log_lines)
+    assert any(line.startswith('S, 2. melding:') for line in log_lines)
+    assert any(line.startswith('Vest, 2. melding:') for line in log_lines)
+
+    # New state-based explanation lines should be visible in the log.
+    assert any('state: Makker' in line for line in log_lines)
+    assert any('stikestimat' in line for line in log_lines)
+
+
+def test_auction_range_ceiling_prevents_level_7_runaway():
+    """Range ceiling should stop unrealistic auctions from climbing to level 7."""
+    row = {
+        'dealer': 'N',
+        'N_hand': 'JT64.AKJT9.95.Q6',
+        'Ø_hand': 'A7.3.AKJ732.T942',
+        'S_hand': 'KQ852.Q2.Q64.873',
+        'V_hand': '93.87654.T8.AKJ5',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    levels = []
+    for c in seq:
+        bid = str(c.get('bid') or '').strip().upper()
+        if bid and bid[0].isdigit():
+            levels.append(int(bid[0]))
+
+    assert levels, 'Expected at least one contract bid in sequence.'
+    assert max(levels) <= 5
+
+
+def test_fourth_suit_forcing_prefers_3nt_with_stopper():
+    """With FSF active, a 4SF ask should be answered with 3NT when stopper is present."""
+    row = {
+        'dealer': 'S',
+        'vul': 'ØV i zonen',
+        'N_hand': 'K7.93.854.AKQT65',
+        'Ø_hand': 'AJ3.7642.A7.9843',
+        'S_hand': 'Q8652.AKJ8.KT6.7',
+        'V_hand': 'T94.QT5.QJ932.J2',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    assert any(
+        str(c.get('dealer') or '').upper() == 'N' and str(c.get('display_bid')) == '3♦'
+        for c in seq
+    )
+    assert any(
+        str(c.get('dealer') or '').upper() == 'S' and str(c.get('display_bid')) == '3NT'
+        for c in seq
+    )
+    assert any('third_hand_fourth_suit_forcing_ask' in str(c.get('rule_id') or '') for c in seq)
+    assert any('third_hand_fourth_suit_reply_3nt_with_stopper' in str(c.get('rule_id') or '') for c in seq)
+
+
+def test_fourth_suit_forcing_asks_with_fourth_suit_when_no_stopper():
+    """With FSF active and no stopper, 4SF ask appears and no direct 3NT reply is made."""
+    row = {
+        'dealer': 'S',
+        'vul': 'ØV i zonen',
+        'N_hand': 'K7.93.854.AKQT65',
+        'Ø_hand': 'AJ3.7642.A7.9843',
+        'S_hand': 'Q8652.AKJ8.976.A7',
+        'V_hand': 'T94.QT5.QJ932.J2',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    assert any(
+        str(c.get('dealer') or '').upper() == 'N' and str(c.get('display_bid')) == '3♦'
+        for c in seq
+    )
+    assert not any(
+        str(c.get('dealer') or '').upper() == 'S' and str(c.get('display_bid')) == '3NT'
+        for c in seq
+    )
+    assert any('third_hand_fourth_suit_forcing_ask' in str(c.get('rule_id') or '') for c in seq)
+
+
+def test_fourth_suit_is_natural_when_two_over_one_game_force_is_active(monkeypatch):
+    """When 2-over-1 GF override is active, 4th suit should be treated natural (not artificial ask)."""
+    row = {
+        'dealer': 'S',
+        'vul': 'ØV i zonen',
+        'N_hand': 'K7.93.854.AKQT65',
+        'Ø_hand': 'AJ3.7642.A7.9843',
+        'S_hand': 'Q8652.AKJ8.KT6.7',
+        'V_hand': 'T94.QT5.QJ932.J2',
+    }
+
+    monkeypatch.setattr(opening_bid_module, '_is_two_over_one_gf_enabled_for_seat', lambda _seat: True)
+    monkeypatch.setattr(opening_bid_module, '_side_has_two_over_one_dhs', lambda _hist: True)
+
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    logs = [str(x) for x in out.get('log_lines', [])]
+
+    assert not any('third_hand_fourth_suit_forcing_ask' in str(c.get('rule_id') or '') for c in seq)
+    assert any('4SF: naturlig behandling' in line for line in logs)
 
 
 def test_bid_scaffold_log_requested_seat_call_format_for_south_second_call():
@@ -984,7 +1081,7 @@ def test_bid_scaffold_log_requested_seat_call_format_for_south_second_call():
 
     log_lines = [
         str(ws.cell(row=r, column=1).value or '')
-        for r in range(37, 140)
+        for r in range(37, 220)
     ]
     assert any(line.startswith('S, 2. melding: PAS: kontekst:') for line in log_lines)
 

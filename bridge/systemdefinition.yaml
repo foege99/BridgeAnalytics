@@ -201,6 +201,20 @@ system_library:
           disabled:
             description: "No splinter bids; use control cuebids only"
 
+      fourth_suit_forcing:
+        choices:
+          enabled:
+            description: "Fourth unbid suit may be used as artificial game-force ask for stopper"
+          disabled:
+            description: "Fourth unbid suit is treated naturally"
+
+      two_over_one_game_force:
+        choices:
+          enabled:
+            description: "2-over-1 game force structure is active"
+          disabled:
+            description: "2-over-1 game force structure is not active"
+
     threshold_rule_definitions:
 
       hcp_minimum:
@@ -1206,6 +1220,27 @@ system_library:
         recommended_entry_condition:
           side_suit_controls_reviewed: true
         note: "RKCB is used after side controls are clarified"
+
+    fourth_suit_forcing_system:
+
+      enabled_from_profile: fourth_suit_forcing
+      default_behavior_if_profile_missing: enabled
+
+      meaning_when_active:
+        fourth_unbid_suit:
+          artificial: true
+          forcing: game_force
+          asks: stopper_in_fourth_suit
+
+      practical_preference:
+        with_stopper_in_fourth_suit: bid_3NT_if_legal
+        without_stopper_in_fourth_suit: bid_fourth_suit_as_ask
+
+      interaction_with_two_over_one:
+        profile_flag: two_over_one_game_force
+        when_active_and_2_over_1_D_H_S_already_shown:
+          treatment: fourth_suit_natural
+          note: "When 2-over-1 game force is active and 2-over-1 in D/H/S has already been shown, fourth suit is natural."
 
     competitive_bidding:
 

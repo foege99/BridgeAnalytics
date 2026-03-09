@@ -13,6 +13,14 @@ from pathlib import Path
 import re
 from typing import Any, Mapping
 
+from bridge.auction_state import (
+    BidEvidence,
+    ValueRange,
+    apply_bid_evidence,
+    create_auction_state,
+    estimate_side_potential,
+    explain_partner_knowledge,
+)
 from bridge.hand_eval import hcp as calc_hcp
 from bridge.hand_eval import parse_hand
 
@@ -507,6 +515,108 @@ def _partner_of(seat: str | None) -> str | None:
     return None
 
 
+def _profile_bool_flag(profile_cfg: Mapping[str, Any], key: str, default: bool) -> bool:
+    raw = profile_cfg.get(key)
+    if isinstance(raw, bool):
+        return raw
+    txt = str(raw or "").strip().lower()
+    if txt in ("enabled", "true", "1", "yes", "on"):
+        return True
+    if txt in ("disabled", "false", "0", "no", "off"):
+        return False
+    return default
+
+
+def _profile_for_seat(seat: str) -> tuple[str | None, dict[str, Any]]:
+    bundle = _load_bundle()
+    return _pick_profile(seat, bundle)
+
+
+def _is_fourth_suit_forcing_enabled_for_seat(seat: str) -> bool:
+    _, profile_cfg = _profile_for_seat(seat)
+    return _profile_bool_flag(profile_cfg, "fourth_suit_forcing", True)
+
+
+def _is_two_over_one_gf_enabled_for_seat(seat: str) -> bool:
+    _, profile_cfg = _profile_for_seat(seat)
+    return _profile_bool_flag(profile_cfg, "two_over_one_game_force", False)
+
+
+def _side_contract_history(
+    prior_calls: list[Mapping[str, Any]],
+    seat: str,
+) -> list[tuple[str, int, str]]:
+    side = _seat_side(seat)
+    out: list[tuple[str, int, str]] = []
+    for c in prior_calls:
+        c_seat = _normalize_seat(c.get("dealer"))
+        if c_seat is None or _seat_side(c_seat) != side:
+            continue
+        bid = str(c.get("bid") or "PASS").upper()
+        parsed = _parse_contract_bid(bid)
+        if parsed is None:
+            continue
+        out.append((c_seat, parsed[0], parsed[1]))
+    return out
+
+
+def _infer_fourth_unbid_suit_from_side_history(
+    side_history: list[tuple[str, int, str]],
+) -> str | None:
+    suits = [strain for _, _, strain in side_history if strain in ("S", "H", "D", "C")]
+    unique = set(suits)
+    if len(unique) != 3:
+        return None
+    for s in ("S", "H", "D", "C"):
+        if s not in unique:
+            return s
+    return None
+
+
+def _side_has_two_over_one_dhs(side_history: list[tuple[str, int, str]]) -> bool:
+    if len(side_history) < 2:
+        return False
+    _, lvl1, strain1 = side_history[0]
+    _, lvl2, strain2 = side_history[1]
+    if lvl1 != 1 or lvl2 != 2:
+        return False
+    if strain2 not in ("D", "H", "S"):
+        return False
+    return strain2 != strain1
+
+
+def _has_stopper_in_suit(hand_dot: str, strain: str) -> bool:
+    parsed = parse_hand(str(hand_dot))
+    ranks = parsed.suits.get(strain, "")
+    length = int(parsed.lengths.get(strain, 0))
+
+    if "A" in ranks:
+        return True
+    if "K" in ranks and length >= 2:
+        return True
+    if "Q" in ranks and "J" in ranks and length >= 3:
+        return True
+    if "Q" in ranks and "T" in ranks and length >= 4:
+        return True
+    return False
+
+
+def _latest_partner_contract_call(
+    prior_calls: list[Mapping[str, Any]],
+    seat: str,
+) -> Mapping[str, Any] | None:
+    partner = _partner_of(seat)
+    for c in reversed(prior_calls):
+        c_seat = _normalize_seat(c.get("dealer"))
+        if c_seat != partner:
+            continue
+        bid = str(c.get("bid") or "PASS").upper()
+        if _parse_contract_bid(bid) is None:
+            continue
+        return c
+    return None
+
+
 def _parse_contract_bid(bid: str | None) -> tuple[int, str] | None:
     if bid is None:
         return None
@@ -715,6 +825,7 @@ def _suggest_third_hand_after_partner_open(
     second_call_bid: str | None,
     hand_tag: str = "3H",
     reserved_cuebid_strains: list[str] | None = None,
+    prior_calls: list[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     hand_col = f"{third_seat}_hand"
     hand_dot = row.get(hand_col)
@@ -765,6 +876,87 @@ def _suggest_third_hand_after_partner_open(
     if reserved:
         reserved_txt = "/".join(_to_display_bid(f"1{s}")[1:] for s in sorted(reserved, key=_strain_order))
         log_lines.append(f"{hand_tag} note: cuebid-farver reserveret ({reserved_txt}).")
+
+    side_history = _side_contract_history(list(prior_calls or []), third_seat)
+    fourth_unbid = _infer_fourth_unbid_suit_from_side_history(side_history)
+    fsf_enabled = _is_fourth_suit_forcing_enabled_for_seat(third_seat)
+    two_over_one_enabled = _is_two_over_one_gf_enabled_for_seat(third_seat)
+    side_has_2o1_dhs = _side_has_two_over_one_dhs(side_history)
+
+    # Reply to partner's prior fourth-suit forcing ask.
+    partner_last = _latest_partner_contract_call(list(prior_calls or []), third_seat)
+    partner_last_rule = str((partner_last or {}).get("rule_id") or "")
+    partner_last_bid = str((partner_last or {}).get("bid") or "PASS")
+    partner_last_parsed = _parse_contract_bid(partner_last_bid)
+    if partner_last_rule == "third_hand_fourth_suit_forcing_ask" and partner_last_parsed is not None:
+        asked_strain = partner_last_parsed[1]
+        asked_txt = _to_display_bid(f"1{asked_strain}")[1:]
+        if _has_stopper_in_suit(str(hand_dot), asked_strain):
+            cand_nt = _lowest_higher_bid_for_strain(highest_contract, "NT")
+            if cand_nt is not None:
+                display = _to_display_bid(cand_nt)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": cand_nt,
+                    "display_bid": display,
+                    "rule_id": "third_hand_fourth_suit_reply_3nt_with_stopper",
+                    "explanation": "Svarer på 4. farve-spørgsmål med 3NT pga. hold i spurgt farve.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} 4SF-svar: makker spurgte via { _to_display_bid(partner_last_bid) } om hold i {asked_txt}.",
+                        f"{hand_tag} 4SF-svar: hold i {asked_txt} fundet -> vælger {display}.",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: third_hand_fourth_suit_reply_3nt_with_stopper",
+                    ],
+                }
+        log_lines.append(
+            f"{hand_tag} 4SF-svar: makker spurgte om hold i {asked_txt}, men intet sikkert hold fundet -> ingen direkte sansmelding."
+        )
+
+    if fourth_unbid is not None and fsf_enabled:
+        fourth_txt = _to_display_bid(f"1{fourth_unbid}")[1:]
+        if two_over_one_enabled and side_has_2o1_dhs:
+            log_lines.append(
+                f"{hand_tag} 4SF: naturlig behandling ({fourth_txt}) fordi 2-over-1 GF er aktiv og allerede vist i D/H/S."
+            )
+        else:
+            stopper = _has_stopper_in_suit(str(hand_dot), fourth_unbid)
+            if stopper:
+                cand_nt = _lowest_higher_bid_for_strain(highest_contract, "NT")
+                if cand_nt is not None:
+                    display = _to_display_bid(cand_nt)
+                    return {
+                        "dealer": third_seat,
+                        "profile": None,
+                        "bid": cand_nt,
+                        "display_bid": display,
+                        "rule_id": "third_hand_fourth_suit_3nt_with_stopper",
+                        "explanation": "4. farve er kunstig game-force; med hold i 4. farve vælges 3NT.",
+                        "log_lines": log_lines + [
+                            f"{hand_tag} 4SF: 4. umeldte farve er {fourth_txt}.",
+                            f"{hand_tag} 4SF: hold i {fourth_txt} fundet -> vælger {display}.",
+                            f"{hand_tag} valg: {display}",
+                            f"{hand_tag} regel-id: third_hand_fourth_suit_3nt_with_stopper",
+                        ],
+                    }
+
+            cand_ask = _lowest_higher_bid_for_strain(highest_contract, fourth_unbid)
+            if cand_ask is not None:
+                display = _to_display_bid(cand_ask)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": cand_ask,
+                    "display_bid": display,
+                    "rule_id": "third_hand_fourth_suit_forcing_ask",
+                    "explanation": "4. farve bruges som kunstig game-force spørgemelding om hold.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} 4SF: 4. umeldte farve er {fourth_txt}.",
+                        f"{hand_tag} 4SF: intet sikkert hold i {fourth_txt} -> kunstig spørgemelding {display}.",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: third_hand_fourth_suit_forcing_ask",
+                    ],
+                }
 
     # 3H when partner opened NT: simple invite/game or pass.
     if partner_strain == "NT":
@@ -942,6 +1134,185 @@ def _legalize_competitive_contract(call: dict[str, Any], reference_bid: str | No
     return call
 
 
+def _infer_public_bid_evidence(state: Any, seat: str, bid: str) -> BidEvidence:
+    """Infer public range evidence from one call.
+
+    The model is intentionally conservative and only uses public auction info.
+    """
+    btxt = str(bid or "PASS").strip().upper().replace(" ", "")
+    evidence = BidEvidence(source=f"offentlig melding {seat}:{_to_display_bid(btxt)}")
+    parsed = _parse_contract_bid(btxt)
+
+    if btxt in ("PASS", "PAS"):
+        if state.highest_contract is None:
+            evidence.hcp_range = ValueRange(0.0, 11.0)
+            evidence.notes.append("Tidligt PAS giver normalt begrænset styrke.")
+        else:
+            evidence.hcp_range = ValueRange(0.0, 15.0)
+            evidence.notes.append("PAS i konkurrence begrænser typisk offensiv styrke.")
+        return evidence
+
+    if btxt in ("X", "DBL", "DOUBLE"):
+        evidence.hcp_range = ValueRange(10.0, 18.0)
+        evidence.notes.append("Dobling tolkes som konkurrencestyrke i denne MVP-model.")
+        return evidence
+
+    if parsed is None:
+        evidence.notes.append("Melding kunne ikke tolkes som kontrakt; ingen stramning.")
+        return evidence
+
+    level, strain = parsed
+
+    if strain == "NT":
+        if level == 1:
+            evidence.hcp_range = ValueRange(14.0, 18.0)
+        elif level == 2:
+            evidence.hcp_range = ValueRange(19.0, 22.0)
+        else:
+            evidence.hcp_range = ValueRange(16.0, 30.0)
+        evidence.notes.append("Sansmelding giver styrkeindikation uden kendt trumffit.")
+        return evidence
+
+    evidence.natural_strain = strain
+    if level == 1:
+        evidence.hcp_range = ValueRange(11.0, 21.0)
+        evidence.suit_min[strain] = 4
+    elif level == 2:
+        evidence.hcp_range = ValueRange(8.0, 18.0)
+        evidence.suit_min[strain] = 5
+    elif level == 3:
+        evidence.hcp_range = ValueRange(6.0, 16.0)
+        evidence.suit_min[strain] = 5
+    else:
+        evidence.hcp_range = ValueRange(5.0, 14.0)
+        evidence.suit_min[strain] = 6
+
+    prev_side_contract = None
+    for prev in reversed(state.calls):
+        if _seat_side(prev.seat) != _seat_side(seat):
+            continue
+        p = _parse_contract_bid(prev.bid)
+        if p is None:
+            continue
+        prev_side_contract = p
+        break
+    if prev_side_contract is not None and prev_side_contract[1] == strain and level >= prev_side_contract[0]:
+        evidence.fit_with_partner_strain = strain
+        evidence.notes.append("Hævning af sidefarve tolkes som fit-visning.")
+
+    return evidence
+
+
+def _build_actor_state_for_decision(
+    row: Mapping[str, Any],
+    actor_seat: str,
+    prior_calls: list[dict[str, Any]],
+) -> Any:
+    dealer = _normalize_seat(row.get("dealer"))
+    if dealer is None and prior_calls:
+        dealer = _normalize_seat(prior_calls[0].get("dealer"))
+    if dealer is None:
+        dealer = actor_seat
+
+    own_hand = row.get(f"{actor_seat}_hand")
+    own_hand_dot = None
+    if own_hand is not None and str(own_hand).strip() not in ("", "None"):
+        own_hand_dot = str(own_hand)
+
+    state = create_auction_state(
+        perspective_seat=actor_seat,
+        dealer=dealer,
+        vulnerability=str(row.get("vul") or row.get("zone") or ""),
+        own_hand_dot=own_hand_dot,
+    )
+
+    for prev in prior_calls:
+        p_seat = _normalize_seat(prev.get("dealer"))
+        if p_seat is None:
+            continue
+        p_bid = str(prev.get("bid") or "PASS").upper()
+        evidence = _infer_public_bid_evidence(state, p_seat, p_bid)
+        apply_bid_evidence(state, p_seat, p_bid, evidence)
+
+    return state
+
+
+def _display_strain(strain: str) -> str:
+    if strain == "NT":
+        return "NT"
+    return _to_display_bid(f"1{strain}")[1:]
+
+
+def _apply_state_ceiling_to_call(
+    row: Mapping[str, Any],
+    prior_calls: list[dict[str, Any]],
+    seat: str,
+    call: dict[str, Any],
+    hand_tag: str,
+) -> dict[str, Any]:
+    """Attach range-based explanation and enforce a stop ceiling for contracts."""
+    out = dict(call)
+    bid_txt = str(out.get("bid") or "PASS").strip().upper()
+    parsed_bid = _parse_contract_bid(bid_txt)
+
+    try:
+        state = _build_actor_state_for_decision(row, seat, prior_calls)
+
+        eval_strain = None
+        if parsed_bid is not None:
+            eval_strain = parsed_bid[1]
+        elif state.highest_contract is not None:
+            high = _parse_contract_bid(state.highest_contract)
+            if high is not None:
+                eval_strain = high[1]
+        if eval_strain is None:
+            eval_strain = "NT"
+
+        estimate = estimate_side_potential(state, seat, eval_strain)
+        partner_lines = explain_partner_knowledge(state, seat)
+
+        lines = list(out.get("log_lines") or [])
+        if partner_lines:
+            lines.append(f"{hand_tag} state: {partner_lines[0]}")
+        if len(partner_lines) > 1:
+            lines.append(f"{hand_tag} state: {partner_lines[1]}")
+        lines.append(
+            f"{hand_tag} state: side {_seat_side(seat)} {_display_strain(eval_strain)} stikestimat "
+            f"{estimate.tricks_range.pretty()} (conf {estimate.confidence:.2f})."
+        )
+
+        if parsed_bid is not None:
+            required = 6 + parsed_bid[0]
+            rule_id_txt = str(out.get("rule_id") or "")
+            keep_constructive_3nt = "fourth_suit_reply_3nt_with_stopper" in rule_id_txt
+            hard_reject = required > (estimate.tricks_range.high + 0.01)
+            soft_reject = (
+                (not keep_constructive_3nt)
+                and estimate.confidence >= 0.35
+                and required > (estimate.tricks_range.midpoint + 0.50)
+            )
+            if hard_reject or soft_reject:
+                out["bid"] = "PASS"
+                out["display_bid"] = "PAS"
+                out["rule_id"] = f"{out.get('rule_id', 'rule')}_range_ceiling_pass"
+                lines.append(
+                    f"{hand_tag} stop: {_to_display_bid(bid_txt)} kræver {required} stik, "
+                    f"estimeret range {estimate.tricks_range.pretty()} -> PAS."
+                )
+            else:
+                lines.append(
+                    f"{hand_tag} state: {_to_display_bid(bid_txt)} kræver {required} stik og er indenfor range-estimat."
+                )
+
+        out["log_lines"] = lines
+        return out
+    except Exception as exc:
+        out["log_lines"] = list(out.get("log_lines") or []) + [
+            f"{hand_tag} state: range-estimat utilgængeligt ({exc}).",
+        ]
+        return out
+
+
 def _prefixed_call_log_lines(call: Mapping[str, Any] | None) -> list[str]:
     if not isinstance(call, Mapping):
         return []
@@ -987,6 +1358,9 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
         if len(order) < 4:
             order = ["N", "Ø", "S", "V"]
 
+    first_actor = _normalize_seat(first.get("dealer")) or order[0]
+    first = _apply_state_ceiling_to_call(row, [], first_actor, first, "1H")
+
     call_sequence: list[dict[str, Any]] = [first]
     max_calls = 20
 
@@ -1023,6 +1397,7 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                 seat,
                 f"{hand_tag} situation: ingen kontrakt endnu -> åbningssituation.",
             )
+            call = _apply_state_ceiling_to_call(row, call_sequence, seat, call, hand_tag)
             call_sequence.append(call)
             continue
 
@@ -1040,8 +1415,10 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                 opp_highest,
                 hand_tag=hand_tag,
                 reserved_cuebid_strains=reserved,
+                prior_calls=call_sequence,
             )
             call = _legalize_competitive_contract(call, highest_contract, hand_tag)
+            call = _apply_state_ceiling_to_call(row, call_sequence, seat, call, hand_tag)
             call_sequence.append(call)
             continue
 
@@ -1052,6 +1429,7 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
             hand_tag=hand_tag,
         )
         call = _legalize_competitive_contract(call, highest_contract, hand_tag)
+        call = _apply_state_ceiling_to_call(row, call_sequence, seat, call, hand_tag)
         call_sequence.append(call)
 
     # Attach per-seat call number to each call for requested log format.

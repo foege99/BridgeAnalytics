@@ -308,4 +308,74 @@ Den bedste løsning er:
 YAML beskriver system og evalueringsparametre.
 Python læser YAML, opdaterer ranges efter meldingerne, beregner stikpotentiale og sammenligner kontraktmål ud fra forventet score.
 
+## AuctionState v1 - konkret feltskitse
+
+Nedenfor er en konkret struktur, der sikrer at en spiller (fx Ø) **ikke** ser makkers skjulte kort.
+
+Implementeret skelet ligger i `bridge/auction_state.py`.
+
+### Topniveau
+
+`AuctionState` bør mindst indeholde:
+
+* `perspective_seat`: hvilken spiller vi vurderer fra (`N/S/Ø/V`)
+* `dealer`: giver
+* `vulnerability`: zonesituation
+* `next_to_act`: hvem der melder nu
+* `calls`: offentlig meldingshistorik
+* `highest_contract`: seneste kontrakt i auktionen
+* `seats`: range-model pr. hånd
+* `fit_estimates`: kendte/sandsynlige fit-prædikater pr. side og farve
+* `assumptions`: forklaringstekst om antagelser
+
+### Seat-model (range, ikke facit)
+
+`SeatEstimate` pr. plads:
+
+* `known_hand`: kun `True` for perspektiv-spillerens egen hånd
+* `hcp_range`: interval for HP (fx `11-21`)
+* `ltc_range`: interval for LTC
+* `controls_range`: interval for kontroller
+* `suit_min`/`suit_max`: min/max længde i `S/H/D/C`
+* `shown_natural_suits`: naturligt viste farver
+* `forcing_state`: passable/inviterende/krav/... 
+* `evidence_log`: hvilke meldingsbeviser der har indsnævret ranges
+
+### Meldingsbevis som input
+
+`BidEvidence` bruges ved hver offentlig melding:
+
+* `hcp_range`, `ltc_range`, `controls_range`
+* `suit_min`, `suit_max`
+* `natural_strain` eller `fit_with_partner_strain`
+* `forcing_state`
+* `artificial`
+* `source` + `notes`
+
+Når en melding tilføjes, opdateres kun ranges via intersection/stramning.
+Hvis ny evidens er i konflikt med nuværende range, beholdes eksisterende range og konflikten logges.
+
+### Fit-model
+
+`FitEstimate` pr. `(side, strain)`:
+
+* `length_range`: fx `8-10` trumfkort
+* `confidence`: usikkerhedsmål
+* `reasons`: hvilke meldinger der gav fit-indikation
+
+### Forklarbar stikmodel fra ranges
+
+`estimate_side_potential(...)` beregner et stik-interval ud fra ranges:
+
+* i farve: LTC-range + HCP-range + fit-bonus
+* i sans: HCP-range-model
+* output er interval + confidence + forklaringslinjer
+
+Det vigtige er at output altid forklarer:
+
+* hvad der kommer fra egen hånd (eksakt)
+* hvad der kommer fra partner-range (meldingsafledt)
+* at skjulte makkerkort ikke bruges
+
+
 
