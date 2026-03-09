@@ -30,28 +30,39 @@ def parse_date_from_title(title):
     osv.
     """
     t = clean(title)
-    
-    # Prøv først 4-cifre år (YYYY)
-    m = re.search(r"(\d{1,2})[.\-]?(\d{1,2})[.\-]?(\d{4})", t)
+
+    def _safe_date(day: int, month: int, year: int):
+        try:
+            return datetime(year, month, day)
+        except ValueError:
+            return None
+
+    # 1) Separeret format: DD.MM.YY(YY), DD-MM-YY(YY), DD/MM/YY(YY)
+    # Separator er bevidst påkrævet her for at undgå fejlmatch som:
+    # 240226 -> 2|4|0226 (ulovligt år)
+    m = re.search(r"(?<!\d)(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2}|\d{4})(?!\d)", t)
     if m:
         day = int(m.group(1))
         month = int(m.group(2))
-        year = int(m.group(3))
-        try:
-            return datetime(year, month, day)
-        except:
-            return None
-    
-    # Fallback: 2-cifre år (YY) → tilføj 2000
-    m = re.search(r"(\d{1,2})[.\-]?(\d{1,2})[.\-]?(\d{2})(?:\D|$)", t)
+        year_raw = m.group(3)
+        year = int(year_raw) if len(year_raw) == 4 else int(year_raw) + 2000
+        parsed = _safe_date(day, month, year)
+        if parsed is not None:
+            return parsed
+
+    # 2) Kompakt format: DDMMYYYY (fx 03032026)
+    m = re.search(r"(?<!\d)(\d{2})(\d{2})(\d{4})(?!\d)", t)
     if m:
-        day = int(m.group(1))
-        month = int(m.group(2))
-        year = int(m.group(3)) + 2000
-        try:
-            return datetime(year, month, day)
-        except:
-            return None
+        parsed = _safe_date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        if parsed is not None:
+            return parsed
+
+    # 3) Kompakt format: DDMMYY (fx 240226, Aften140323)
+    m = re.search(r"(?<!\d)(\d{2})(\d{2})(\d{2})(?!\d)", t)
+    if m:
+        parsed = _safe_date(int(m.group(1)), int(m.group(2)), int(m.group(3)) + 2000)
+        if parsed is not None:
+            return parsed
     
     return None
     
