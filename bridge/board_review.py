@@ -3,6 +3,8 @@ import re
 import pandas as pd
 import numpy as np
 
+from bridge.opening_bid import suggest_opening_for_row
+
 
 # ---------------------------------------------------------------------------
 # Direction helpers shared by board-layout functions
@@ -446,6 +448,18 @@ def write_board1_layout_sheet(
             )
             hdr_fill = _BID_LIGHT_PINK if is_vul else _BID_LIGHT_GREEN
             hdr_cell.fill = PatternFill(fill_type='solid', fgColor=hdr_fill)
+
+    # Dealer opening suggestion from YAML profile logic (MVP: only first call).
+    opening_guess = suggest_opening_for_row(per_row)
+    opening_dealer = opening_guess.get('dealer')
+    opening_display_bid = opening_guess.get('display_bid')
+    bid_col_by_seat = {'S': 1, 'V': 2, 'N': 3, 'Ø': 4}
+    if opening_dealer in bid_col_by_seat and opening_display_bid:
+        ws.cell(
+            row=_BID_DATA_START_ROW,
+            column=bid_col_by_seat[opening_dealer],
+            value=opening_display_bid,
+        )
 
     # Body rows A21:D32 (light green background).
     # If bid text is present later, ensure hearts/diamonds render red.

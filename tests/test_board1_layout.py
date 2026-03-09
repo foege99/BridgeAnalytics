@@ -684,6 +684,46 @@ def test_bid_scaffold_header_zone_coloring_ns_only():
     assert o_rgb.endswith('EAF2E3')
 
 
+def test_bid_scaffold_writes_opening_bid_for_dealer_north():
+    """Dealer North with 5+ spades should place opening bid in N column (C21)."""
+    df = _make_df(
+        dealer='N',
+        # 13 HCP, 5-4 majors -> 1S under five-card-major profile.
+        N_hand='AKQJ9.8765.3.K2',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=21, column=3).value == '1♠'
+
+
+def test_bid_scaffold_writes_pas_when_opening_threshold_not_met():
+    """Very weak dealer hand should produce PAS in dealer column."""
+    df = _make_df(
+        dealer='S',
+        S_hand='T9842.83.742.953',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=21, column=1).value == 'PAS'
+
+
+def test_bid_scaffold_writes_opening_bid_for_dealer_east_nt_policy():
+    """Dealer East uses EW profile and balanced 17 HCP should open 1NT in Ø column (D21)."""
+    df = _make_df(
+        dealer='Ø',
+        Ø_hand='AKQ2.QJ3.A32.J54',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=21, column=4).value == '1NT'
+
+
 def test_right_info_block_contract_fields():
     """Info block: Kontrakt at C2, Spilfører at C3, Udspil at C4, Resultat at C5."""
     df = _make_df(contract='4S', decl='N', lead='♥A', tricks=10)
