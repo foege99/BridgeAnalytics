@@ -954,188 +954,76 @@ def _prefixed_call_log_lines(call: Mapping[str, Any] | None) -> list[str]:
     }
     seat_display = seat_display_map.get(seat, "?")
     display = str(call.get("display_bid") or "PAS")
-    prefix = f"{seat_display}, {display}: "
-    return [prefix + str(line) for line in list(call.get("log_lines") or [])]
+    seat_call_no = int(call.get("seat_call_no") or 1)
+
+    def _clean_line(line: object) -> str:
+        txt = str(line)
+        # Remove technical hand-tag prefixes like "4H " from log payload.
+        return re.sub(r"^\s*\d+H\s+", "", txt)
+
+    prefix = f"{seat_display}, {seat_call_no}. melding: {display}: "
+    return [prefix + _clean_line(line) for line in list(call.get("log_lines") or [])]
+
+
+def _is_pass_bid(bid: object) -> bool:
+    return str(bid or "").strip().upper() in ("PASS", "PAS")
 
 
 def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    """Suggest first two rounds (8 calls) using lightweight rule-based heuristics."""
+    """Suggest auction calls until 3 consecutive passes or 5 rounds (20 calls)."""
     first = suggest_opening_for_row(row)
     first_seat = _normalize_seat(first.get("dealer"))
-    second_seat = _next_seat(first_seat)
 
-    second = None
-    if second_seat is not None:
-        first_bid = str(first.get("bid") or "PASS").upper()
-        if first_bid in ("PASS", "PAS"):
-            # If first hand passes, second hand is treated as opening seat.
-            second = _opening_from_specific_seat(
-                row,
-                second_seat,
-                "2H situation: 1. hånd PAS -> 2. hånd i åbningssituation.",
-            )
-        else:
-            second = _suggest_second_hand_competitive(row, second_seat, first_bid, hand_tag="2H")
+    if first_seat is None:
+        order = ["N", "Ø", "S", "V"]
+        first["dealer"] = order[0]
+    else:
+        order = [first_seat]
+        while len(order) < 4:
+            nxt = _next_seat(order[-1])
+            if nxt is None:
+                break
+            order.append(nxt)
+        if len(order) < 4:
+            order = ["N", "Ø", "S", "V"]
 
-    third = None
-    third_seat = _next_seat(second.get("dealer") if isinstance(second, dict) else second_seat)
-    first_bid_txt = str(first.get("bid") or "PASS").upper()
-    second_bid_txt = str(second.get("bid") or "PASS").upper() if isinstance(second, dict) else "PASS"
+    call_sequence: list[dict[str, Any]] = [first]
+    max_calls = 20
 
-    if third_seat is not None:
-        if first_bid_txt in ("PASS", "PAS") and second_bid_txt in ("PASS", "PAS"):
-            third = _opening_from_specific_seat(
-                row,
-                third_seat,
-                "3H situation: 1H og 2H PAS -> 3H i åbningssituation.",
-            )
-        elif first_bid_txt in ("PASS", "PAS"):
-            if _parse_contract_bid(second_bid_txt) is not None:
-                third = _suggest_second_hand_competitive(
-                    row,
-                    third_seat,
-                    second_bid_txt,
-                    hand_tag="3H",
-                )
-            else:
-                third = _opening_from_specific_seat(
-                    row,
-                    third_seat,
-                    "3H fallback: 2H ikke tolket som kontrakt -> 3H i åbningssituation.",
-                )
-        elif _parse_contract_bid(first_bid_txt) is not None:
-            second_parsed = _parse_contract_bid(second_bid_txt)
-            reserved_for_third = [second_parsed[1]] if second_parsed is not None else []
-            third = _suggest_third_hand_after_partner_open(
-                row,
-                third_seat,
-                first_bid_txt,
-                second_bid_txt,
-                hand_tag="3H",
-                reserved_cuebid_strains=reserved_for_third,
-            )
-        else:
-            third = _opening_from_specific_seat(
-                row,
-                third_seat,
-                "3H fallback: 1H ikke tolket som kontrakt -> 3H i åbningssituation.",
-            )
+    for call_no in range(2, max_calls + 1):
+        # Stop condition: three passes in a row.
+        if len(call_sequence) >= 3 and all(_is_pass_bid(c.get("bid")) for c in call_sequence[-3:]):
+            break
 
-    fourth = None
-    fourth_seat = _next_seat(third.get("dealer") if isinstance(third, dict) else third_seat)
-    third_bid_txt = str(third.get("bid") or "PASS").upper() if isinstance(third, dict) else "PASS"
+        seat = order[(call_no - 1) % 4]
+        hand_tag = f"{call_no}H"
 
-    if fourth_seat is not None:
-        all_three_pass = (
-            first_bid_txt in ("PASS", "PAS")
-            and second_bid_txt in ("PASS", "PAS")
-            and third_bid_txt in ("PASS", "PAS")
-        )
-        if all_three_pass:
-            fourth = _opening_from_specific_seat(
-                row,
-                fourth_seat,
-                "4H situation: 1H, 2H og 3H PAS -> 4H i åbningssituation.",
-            )
-        else:
-            prior_calls = [
-                (first_seat, first_bid_txt),
-                (second.get("dealer") if isinstance(second, dict) else second_seat, second_bid_txt),
-                (third.get("dealer") if isinstance(third, dict) else third_seat, third_bid_txt),
-            ]
-            partner_seat = _partner_of(fourth_seat)
-            partner_contract_bid = None
-            opponent_contract_bids: list[str] = []
-
-            for seat, bid in prior_calls:
-                seat_norm = _normalize_seat(seat)
-                if seat_norm is None:
-                    continue
-                if _parse_contract_bid(bid) is None:
-                    continue
-                if seat_norm == partner_seat:
-                    partner_contract_bid = bid
-                else:
-                    opponent_contract_bids.append(bid)
-
-            if partner_contract_bid is not None:
-                opp_highest = _highest_contract_bid_text(*opponent_contract_bids)
-                reserved_for_fourth = []
-                for b in opponent_contract_bids:
-                    p = _parse_contract_bid(b)
-                    if p is not None:
-                        reserved_for_fourth.append(p[1])
-                fourth = _suggest_third_hand_after_partner_open(
-                    row,
-                    fourth_seat,
-                    partner_contract_bid,
-                    opp_highest,
-                    hand_tag="4H",
-                    reserved_cuebid_strains=reserved_for_fourth,
-                )
-            else:
-                highest_contract = _highest_contract_bid_text(first_bid_txt, second_bid_txt, third_bid_txt)
-                if highest_contract is not None:
-                    fourth = _suggest_second_hand_competitive(
-                        row,
-                        fourth_seat,
-                        highest_contract,
-                        hand_tag="4H",
-                    )
-                else:
-                    fourth = _opening_from_specific_seat(
-                        row,
-                        fourth_seat,
-                        "4H fallback: ingen tolkelig kontrakt før 4H -> åbningssituation.",
-                    )
-    first_round_calls = [first, second, third, fourth]
-
-    # --------------------------
-    # Round 2 (5H-8H)
-    # --------------------------
-    second_round_calls: list[dict[str, Any]] = []
-    round2_order = [
-        first_seat,
-        second.get("dealer") if isinstance(second, dict) else second_seat,
-        third.get("dealer") if isinstance(third, dict) else third_seat,
-        fourth.get("dealer") if isinstance(fourth, dict) else fourth_seat,
-    ]
-
-    for idx, seat in enumerate(round2_order, start=5):
-        seat_norm = _normalize_seat(seat)
-        hand_tag = f"{idx}H"
-        if seat_norm is None:
-            continue
-
-        prior_calls = [c for c in first_round_calls + second_round_calls if isinstance(c, dict)]
-        partner_seat = _partner_of(seat_norm)
-
+        partner_seat = _partner_of(seat)
         partner_contract = None
-        opp_contracts: list[str] = []
         own_contracts: list[str] = []
+        opp_contracts: list[str] = []
 
-        for c in prior_calls:
-            c_seat = _normalize_seat(c.get("dealer"))
-            c_bid = str(c.get("bid") or "PASS").upper()
-            if _parse_contract_bid(c_bid) is None or c_seat is None:
+        for prev in call_sequence:
+            prev_seat = _normalize_seat(prev.get("dealer"))
+            prev_bid = str(prev.get("bid") or "PASS").upper()
+            if prev_seat is None or _parse_contract_bid(prev_bid) is None:
                 continue
-            if c_seat == partner_seat:
-                partner_contract = c_bid
-            if _seat_side(c_seat) == _seat_side(seat_norm):
-                own_contracts.append(c_bid)
+            if prev_seat == partner_seat:
+                partner_contract = prev_bid
+            if _seat_side(prev_seat) == _seat_side(seat):
+                own_contracts.append(prev_bid)
             else:
-                opp_contracts.append(c_bid)
+                opp_contracts.append(prev_bid)
 
         highest_contract = _highest_contract_bid_text(*(own_contracts + opp_contracts))
 
-        # If nobody has bid a contract yet, this hand is in opening situation.
         if highest_contract is None:
             call = _opening_from_specific_seat(
                 row,
-                seat_norm,
+                seat,
                 f"{hand_tag} situation: ingen kontrakt endnu -> åbningssituation.",
             )
-            second_round_calls.append(call)
+            call_sequence.append(call)
             continue
 
         if partner_contract is not None:
@@ -1147,45 +1035,56 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                     reserved.append(p[1])
             call = _suggest_third_hand_after_partner_open(
                 row,
-                seat_norm,
+                seat,
                 partner_contract,
                 opp_highest,
                 hand_tag=hand_tag,
                 reserved_cuebid_strains=reserved,
             )
             call = _legalize_competitive_contract(call, highest_contract, hand_tag)
-            second_round_calls.append(call)
+            call_sequence.append(call)
             continue
 
-        # No partner contract seen: act competitively over current highest contract.
         call = _suggest_second_hand_competitive(
             row,
-            seat_norm,
+            seat,
             highest_contract,
             hand_tag=hand_tag,
         )
         call = _legalize_competitive_contract(call, highest_contract, hand_tag)
-        second_round_calls.append(call)
+        call_sequence.append(call)
 
-    call_sequence = [c for c in first_round_calls + second_round_calls if isinstance(c, dict)]
+    # Attach per-seat call number to each call for requested log format.
+    seat_counter: dict[str, int] = {"N": 0, "Ø": 0, "S": 0, "V": 0}
+    for call in call_sequence:
+        seat = _normalize_seat(call.get("dealer"))
+        if seat is None:
+            call["seat_call_no"] = 1
+            continue
+        seat_counter[seat] = seat_counter.get(seat, 0) + 1
+        call["seat_call_no"] = seat_counter[seat]
+
     combined_log: list[str] = []
     for c in call_sequence:
         combined_log.extend(_prefixed_call_log_lines(c))
 
-    fifth = second_round_calls[0] if len(second_round_calls) >= 1 else None
-    sixth = second_round_calls[1] if len(second_round_calls) >= 2 else None
-    seventh = second_round_calls[2] if len(second_round_calls) >= 3 else None
-    eighth = second_round_calls[3] if len(second_round_calls) >= 4 else None
-
-    return {
-        "first_call": first,
-        "second_call": second,
-        "third_call": third,
-        "fourth_call": fourth,
-        "fifth_call": fifth,
-        "sixth_call": sixth,
-        "seventh_call": seventh,
-        "eighth_call": eighth,
+    result: dict[str, Any] = {
         "call_sequence": call_sequence,
         "log_lines": combined_log,
     }
+
+    # Backward-compatible named keys for earlier calls.
+    key_names = [
+        "first_call",
+        "second_call",
+        "third_call",
+        "fourth_call",
+        "fifth_call",
+        "sixth_call",
+        "seventh_call",
+        "eighth_call",
+    ]
+    for i, key in enumerate(key_names):
+        result[key] = call_sequence[i] if i < len(call_sequence) else None
+
+    return result

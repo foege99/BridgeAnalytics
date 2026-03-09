@@ -16,6 +16,7 @@ from bridge.board_review import (
     _ROTATIONS,
     _both_names_in_df,
 )
+from bridge.opening_bid import suggest_first_round_for_row
 
 
 # ---------------------------------------------------------------------------
@@ -873,9 +874,9 @@ def test_bid_scaffold_log_lines_start_with_current_bid():
         for r in range(37, 57)
     ]
 
-    assert any(line.startswith('N, 1♠:') for line in log_lines)
-    assert any(line.startswith('Ø, 2♥:') for line in log_lines)
-    assert any(line.startswith('S, 2♠:') for line in log_lines)
+    assert any(line.startswith('N, 1. melding: 1♠:') for line in log_lines)
+    assert any(line.startswith('Ø, 1. melding: 2♥:') for line in log_lines)
+    assert any(line.startswith('S, 1. melding: 2♠:') for line in log_lines)
 
 
 def test_bid_scaffold_fourth_hand_bid_and_wrap_after_three_calls():
@@ -914,7 +915,7 @@ def test_bid_scaffold_log_includes_fourth_hand_with_bid_prefix():
         str(ws.cell(row=r, column=1).value or '')
         for r in range(37, 80)
     ]
-    assert any(line.startswith('Vest, 2♥:') for line in log_lines)
+    assert any(line.startswith('Vest, 1. melding: 2♥:') for line in log_lines)
 
 
 def test_bid_scaffold_second_round_places_all_four_calls():
@@ -962,10 +963,45 @@ def test_bid_scaffold_log_includes_second_round_side_seat_prefixes():
     ]
 
     # Second-round prefixes expected in this scenario:
-    assert any(line.startswith('N, 3♠:') for line in log_lines)
-    assert any(line.startswith('Ø, 4♣:') for line in log_lines)
-    assert any(line.startswith('S, 4♠:') for line in log_lines)
-    assert any(line.startswith('Vest, 5♣:') for line in log_lines)
+    assert any(line.startswith('N, 2. melding: 3♠:') for line in log_lines)
+    assert any(line.startswith('Ø, 2. melding: 4♣:') for line in log_lines)
+    assert any(line.startswith('S, 2. melding: 4♠:') for line in log_lines)
+    assert any(line.startswith('Vest, 2. melding: 5♣:') for line in log_lines)
+
+
+def test_bid_scaffold_log_requested_seat_call_format_for_south_second_call():
+    """Requested format example: 'S, 2. melding: PAS: kontekst: ...' should appear when applicable."""
+    df = _make_df(
+        dealer='V',
+        V_hand='Q6.QJ87.AK8.8532',
+        Ø_hand='A75.KT963.Q.K976',
+        N_hand='3.A42.9632.AQJT4',
+        S_hand='KJT9842.5.JT754.',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    log_lines = [
+        str(ws.cell(row=r, column=1).value or '')
+        for r in range(37, 140)
+    ]
+    assert any(line.startswith('S, 2. melding: PAS: kontekst:') for line in log_lines)
+
+
+def test_auction_stops_after_three_consecutive_passes():
+    """Auction generation should stop immediately when three passes occur in a row."""
+    row = {
+        'dealer': 'N',
+        'N_hand': '9753.862.873.954',
+        'Ø_hand': '8642.743.962.T72',
+        'S_hand': 'T842.95.T754.863',
+        'V_hand': 'AQJ.KQJ.AKQ.AKQJ',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    assert len(seq) == 3
+    assert [str(c.get('display_bid')) for c in seq] == ['PAS', 'PAS', 'PAS']
 
 
 def test_bid_scaffold_fourth_hand_avoids_enemy_suit_natural_bid():

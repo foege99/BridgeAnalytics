@@ -421,7 +421,7 @@ def write_board1_layout_sheet(
     _BID_DATA_START_ROW = 21
     _BID_DATA_ROWS = 12
     _BID_LOG_START_ROW = _BID_DATA_START_ROW + _BID_DATA_ROWS + 3  # ~15 rows below header
-    _BID_LOG_MAX_LINES = 120
+    _BID_LOG_MAX_LINES = 220
     _BID_START_COL = 1  # A
     _BID_HEADERS = ['S', 'V', 'N', 'Ø']
     _BID_LIGHT_GREEN = 'EAF2E3'
