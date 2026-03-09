@@ -421,6 +421,7 @@ def write_board1_layout_sheet(
     _BID_DATA_START_ROW = 21
     _BID_DATA_ROWS = 12
     _BID_LOG_START_ROW = _BID_DATA_START_ROW + _BID_DATA_ROWS + 3  # ~15 rows below header
+    _BID_LOG_MAX_LINES = 40
     _BID_START_COL = 1  # A
     _BID_HEADERS = ['S', 'V', 'N', 'Ø']
     _BID_LIGHT_GREEN = 'EAF2E3'
@@ -454,6 +455,7 @@ def write_board1_layout_sheet(
     round1_guess = suggest_first_round_for_row(per_row)
     first_guess = round1_guess.get('first_call', {}) if isinstance(round1_guess, dict) else {}
     second_guess = round1_guess.get('second_call', {}) if isinstance(round1_guess, dict) else {}
+    third_guess = round1_guess.get('third_call', {}) if isinstance(round1_guess, dict) else {}
     opening_log_lines = round1_guess.get('log_lines') if isinstance(round1_guess, dict) else []
     bid_col_by_seat = {'S': 1, 'V': 2, 'N': 3, 'Ø': 4}
 
@@ -461,11 +463,15 @@ def write_board1_layout_sheet(
     first_display = first_guess.get('display_bid') if isinstance(first_guess, dict) else None
     second_seat = second_guess.get('dealer') if isinstance(second_guess, dict) else None
     second_display = second_guess.get('display_bid') if isinstance(second_guess, dict) else None
+    third_seat = third_guess.get('dealer') if isinstance(third_guess, dict) else None
+    third_display = third_guess.get('display_bid') if isinstance(third_guess, dict) else None
     call_sequence = []
     if first_seat in bid_col_by_seat and first_display:
         call_sequence.append((first_seat, first_display))
     if second_seat in bid_col_by_seat and second_display:
         call_sequence.append((second_seat, second_display))
+    if third_seat in bid_col_by_seat and third_display:
+        call_sequence.append((third_seat, third_display))
 
     # Place calls in auction order: move right on same row; wrap to next row when needed.
     cur_row = _BID_DATA_START_ROW
@@ -494,7 +500,7 @@ def write_board1_layout_sheet(
             if thin_bid:
                 log_hdr.border = Border(left=thin_bid, right=thin_bid, top=thin_bid, bottom=thin_bid)
 
-        for idx, line in enumerate(opening_log_lines[:16], start=1):
+        for idx, line in enumerate(opening_log_lines[:_BID_LOG_MAX_LINES], start=1):
             r_log = _BID_LOG_START_ROW + idx
             ws.merge_cells(start_row=r_log, start_column=1, end_row=r_log, end_column=4)
             log_cell = ws.cell(row=r_log, column=1)
@@ -503,6 +509,15 @@ def write_board1_layout_sheet(
                 log_cell.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
                 if thin_bid:
                     log_cell.border = Border(left=thin_bid, right=thin_bid, top=thin_bid, bottom=thin_bid)
+
+        if len(opening_log_lines) > _BID_LOG_MAX_LINES:
+            r_log = _BID_LOG_START_ROW + _BID_LOG_MAX_LINES + 1
+            ws.merge_cells(start_row=r_log, start_column=1, end_row=r_log, end_column=4)
+            more_cell = ws.cell(row=r_log, column=1, value='... log afkortet ...')
+            if _styles_available:
+                more_cell.alignment = Alignment(horizontal='left', vertical='center')
+                if thin_bid:
+                    more_cell.border = Border(left=thin_bid, right=thin_bid, top=thin_bid, bottom=thin_bid)
 
     # Body rows A21:D32 (light green background).
     # If bid text is present later, ensure hearts/diamonds render red.

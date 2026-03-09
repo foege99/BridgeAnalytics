@@ -822,6 +822,62 @@ def test_bid_scaffold_second_hand_wraps_to_next_row_after_column_d():
     assert ws.cell(row=22, column=1).value == 'PAS'
 
 
+def test_bid_scaffold_third_hand_opens_when_first_two_pass():
+    """If 1H and 2H both pass, 3H must be treated as opening seat."""
+    df = _make_df(
+        dealer='N',
+        N_hand='T9842.83.742.953',          # 1H PAS
+        Ø_hand='T763.942.J86.874',          # 2H PAS
+        S_hand='AKQJ9.8765.3.K2',           # 3H opens 1S
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=21, column=3).value == 'PAS'   # N
+    assert ws.cell(row=21, column=4).value == 'PAS'   # Ø
+    assert ws.cell(row=22, column=1).value == '1♠'    # S
+
+
+def test_bid_scaffold_third_hand_considers_first_and_second_calls():
+    """3H should react to 1H opening and 2H overcall (simple raise in this MVP)."""
+    df = _make_df(
+        dealer='N',
+        N_hand='AKQJ9.8765.3.K2',           # 1H = 1S
+        Ø_hand='82.AKQJ97.54.842',          # 2H = 2H overcall
+        S_hand='T84.QJ3.A742.KJ5',          # 3H supports spades
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=21, column=3).value == '1♠'
+    assert str(ws.cell(row=21, column=4).value) == '2♥'
+    assert ws.cell(row=22, column=1).value == '2♠'
+
+
+def test_bid_scaffold_log_lines_start_with_current_bid():
+    """Log lines should begin with current call display bid (e.g., 1♠ then 2♥)."""
+    df = _make_df(
+        dealer='N',
+        N_hand='AKQJ9.8765.3.K2',
+        Ø_hand='82.AKQJ97.54.842',
+        S_hand='T84.QJ3.A742.KJ5',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    log_lines = [
+        str(ws.cell(row=r, column=1).value or '')
+        for r in range(37, 57)
+    ]
+
+    assert any(line.startswith('1♠ ') for line in log_lines)
+    assert any(line.startswith('2♥ ') for line in log_lines)
+    assert any(line.startswith('2♠ ') for line in log_lines)
+
+
 def test_right_info_block_contract_fields():
     """Info block: Kontrakt at C2, Spilfører at C3, Udspil at C4, Resultat at C5."""
     df = _make_df(contract='4S', decl='N', lead='♥A', tricks=10)

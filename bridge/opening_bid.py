@@ -523,10 +523,35 @@ def _lowest_higher_bid_for_strain(first_bid: str | None, strain: str) -> str | N
     return f"{out_lvl}{strain}"
 
 
+def _highest_contract_bid_text(*bids: str | None) -> str | None:
+    best: tuple[int, str] | None = None
+    for b in bids:
+        parsed = _parse_contract_bid(b)
+        if parsed is None:
+            continue
+        if best is None:
+            best = parsed
+            continue
+        if parsed[0] > best[0] or (parsed[0] == best[0] and _strain_order(parsed[1]) > _strain_order(best[1])):
+            best = parsed
+    if best is None:
+        return None
+    return f"{best[0]}{best[1]}"
+
+
+def _opening_from_specific_seat(row: Mapping[str, Any], seat: str, note: str) -> dict[str, Any]:
+    row2 = dict(row)
+    row2["dealer"] = seat
+    out = suggest_opening_for_row(row2)
+    out["log_lines"] = [note] + list(out.get("log_lines") or [])
+    return out
+
+
 def _suggest_second_hand_competitive(
     row: Mapping[str, Any],
     second_seat: str,
     first_bid: str,
+    hand_tag: str = "2H",
 ) -> dict[str, Any]:
     hand_col = f"{second_seat}_hand"
     hand_dot = row.get(hand_col)
@@ -539,17 +564,17 @@ def _suggest_second_hand_competitive(
             "rule_id": "second_hand_missing",
             "explanation": f"2. hånd ({second_seat}) mangler hånddata; vælger PAS.",
             "log_lines": [
-                f"2H kontekst: seat={second_seat}, modpart åbnede {_to_display_bid(first_bid)}.",
-                "2H valg: PAS",
-                "2H regel-id: second_hand_missing",
+                f"{hand_tag} kontekst: seat={second_seat}, modpart åbnede {_to_display_bid(first_bid)}.",
+                f"{hand_tag} valg: PAS",
+                f"{hand_tag} regel-id: second_hand_missing",
             ],
         }
 
     ctx = _build_context(str(hand_dot))
     parsed_first = _parse_contract_bid(first_bid)
     log_lines = [
-        f"2H kontekst: seat={second_seat}, modpart åbnede {_to_display_bid(first_bid)}.",
-        f"2H hånd: {int(ctx['hcp'])} HCP, shape {_shape_text(ctx)}.",
+        f"{hand_tag} kontekst: seat={second_seat}, modpart åbnede {_to_display_bid(first_bid)}.",
+        f"{hand_tag} hånd: {int(ctx['hcp'])} HCP, shape {_shape_text(ctx)}.",
     ]
 
     if parsed_first is None:
@@ -562,8 +587,8 @@ def _suggest_second_hand_competitive(
             "rule_id": "first_bid_unusable",
             "explanation": "Kan ikke tolke 1. hånds melding; vælger PAS.",
             "log_lines": log_lines + [
-                "2H valg: PAS",
-                "2H regel-id: first_bid_unusable",
+                f"{hand_tag} valg: PAS",
+                f"{hand_tag} regel-id: first_bid_unusable",
             ],
         }
 
@@ -571,23 +596,23 @@ def _suggest_second_hand_competitive(
 
     # --- Takeout double (basic MVP) ---
     double_ok = False
-    double_reason = "2H oplysningsdobling: afvist."
+    double_reason = f"{hand_tag} oplysningsdobling: afvist."
     if first_strain in ("C", "D", "H", "S") and int(ctx["hcp"]) >= 12:
         opener_len = int(ctx["clubs"] if first_strain == "C" else ctx["diamonds"] if first_strain == "D" else ctx["hearts"] if first_strain == "H" else ctx["spades"])
         if first_strain in ("C", "D"):
             majors_ok = int(ctx["hearts"]) >= 3 and int(ctx["spades"]) >= 3
             if opener_len <= 2 and majors_ok:
                 double_ok = True
-                double_reason = "2H oplysningsdobling: OK (kort i minor + begge majorer)."
+                double_reason = f"{hand_tag} oplysningsdobling: OK (kort i minor + begge majorer)."
             else:
-                double_reason = "2H oplysningsdobling: afvist (kræver kort minor + majorstøtte)."
+                double_reason = f"{hand_tag} oplysningsdobling: afvist (kræver kort minor + majorstøtte)."
         else:
             other_major_len = int(ctx["hearts"] if first_strain == "S" else ctx["spades"])
             if opener_len <= 2 and other_major_len >= 4:
                 double_ok = True
-                double_reason = "2H oplysningsdobling: OK (kort i åbners major + 4+ i anden major)."
+                double_reason = f"{hand_tag} oplysningsdobling: OK (kort i åbners major + 4+ i anden major)."
             else:
-                double_reason = "2H oplysningsdobling: afvist (kræver kort åbners major + 4+ i anden major)."
+                double_reason = f"{hand_tag} oplysningsdobling: afvist (kræver kort åbners major + 4+ i anden major)."
     log_lines.append(double_reason)
 
     # --- Natural overcall (basic MVP) ---
@@ -605,7 +630,7 @@ def _suggest_second_hand_competitive(
 
     overcall_bid = None
     overcall_rule = None
-    overcall_line = "2H indmelding: afvist."
+    overcall_line = f"{hand_tag} indmelding: afvist."
     if int(ctx["hcp"]) >= 8:
         for s in candidate_suits:
             if suit_lens[s] < 5:
@@ -616,12 +641,12 @@ def _suggest_second_hand_competitive(
             overcall_bid = cand
             overcall_rule = "natural_overcall_basic"
             overcall_line = (
-                f"2H indmelding: OK med {_to_display_bid(cand)} "
+                f"{hand_tag} indmelding: OK med {_to_display_bid(cand)} "
                 f"(5+ farve, HCP {int(ctx['hcp'])}, højere end 1H)."
             )
             break
     else:
-        overcall_line = f"2H indmelding: afvist (HCP {int(ctx['hcp'])} < 8)."
+        overcall_line = f"{hand_tag} indmelding: afvist (HCP {int(ctx['hcp'])} < 8)."
     log_lines.append(overcall_line)
 
     # Priority: double with classic shape, otherwise natural overcall, else pass.
@@ -638,8 +663,8 @@ def _suggest_second_hand_competitive(
             "rule_id": "takeout_double_basic",
             "explanation": "2. hånd vælger oplysningsdobling.",
             "log_lines": log_lines + [
-                "2H valg: X",
-                "2H regel-id: takeout_double_basic",
+                f"{hand_tag} valg: X",
+                f"{hand_tag} regel-id: takeout_double_basic",
             ],
         }
 
@@ -652,8 +677,8 @@ def _suggest_second_hand_competitive(
             "rule_id": overcall_rule,
             "explanation": "2. hånd vælger naturlig indmelding.",
             "log_lines": log_lines + [
-                f"2H valg: {_to_display_bid(overcall_bid)}",
-                f"2H regel-id: {overcall_rule}",
+                f"{hand_tag} valg: {_to_display_bid(overcall_bid)}",
+                f"{hand_tag} regel-id: {overcall_rule}",
             ],
         }
 
@@ -665,14 +690,166 @@ def _suggest_second_hand_competitive(
         "rule_id": "competitive_pass",
         "explanation": "2. hånd finder hverken oplysningsdobling eller indmelding.",
         "log_lines": log_lines + [
-            "2H valg: PAS",
-            "2H regel-id: competitive_pass",
+            f"{hand_tag} valg: PAS",
+            f"{hand_tag} regel-id: competitive_pass",
+        ],
+    }
+
+
+def _suggest_third_hand_after_partner_open(
+    row: Mapping[str, Any],
+    third_seat: str,
+    partner_opening_bid: str,
+    second_call_bid: str | None,
+    hand_tag: str = "3H",
+) -> dict[str, Any]:
+    hand_col = f"{third_seat}_hand"
+    hand_dot = row.get(hand_col)
+    if hand_dot is None or str(hand_dot).strip() in ("", "None"):
+        return {
+            "dealer": third_seat,
+            "profile": None,
+            "bid": "PASS",
+            "display_bid": "PAS",
+            "rule_id": "third_hand_missing",
+            "explanation": f"3. hånd ({third_seat}) mangler hånddata; vælger PAS.",
+            "log_lines": [
+                f"{hand_tag} kontekst: makker åbnede {_to_display_bid(partner_opening_bid)}, 2H={_to_display_bid(second_call_bid or 'PASS')}",
+                f"{hand_tag} valg: PAS",
+                f"{hand_tag} regel-id: third_hand_missing",
+            ],
+        }
+
+    parsed_partner = _parse_contract_bid(partner_opening_bid)
+    if parsed_partner is None:
+        return {
+            "dealer": third_seat,
+            "profile": None,
+            "bid": "PASS",
+            "display_bid": "PAS",
+            "rule_id": "partner_bid_unusable",
+            "explanation": "Kan ikke tolke makkers åbning; vælger PAS.",
+            "log_lines": [
+                f"{hand_tag} kontekst: makkers åbning kunne ikke tolkes.",
+                f"{hand_tag} valg: PAS",
+                f"{hand_tag} regel-id: partner_bid_unusable",
+            ],
+        }
+
+    ctx = _build_context(str(hand_dot))
+    partner_lvl, partner_strain = parsed_partner
+    highest_contract = _highest_contract_bid_text(partner_opening_bid, second_call_bid)
+
+    log_lines = [
+        f"{hand_tag} kontekst: makker åbnede {_to_display_bid(partner_opening_bid)}, 2H={_to_display_bid(second_call_bid or 'PASS')}.",
+        f"{hand_tag} hånd: {int(ctx['hcp'])} HCP, shape {_shape_text(ctx)}.",
+    ]
+
+    # 3H when partner opened NT: simple invite/game or pass.
+    if partner_strain == "NT":
+        if int(ctx["hcp"]) >= 10:
+            cand = _lowest_higher_bid_for_strain(highest_contract, "NT")
+            if cand is not None:
+                display = _to_display_bid(cand)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": cand,
+                    "display_bid": display,
+                    "rule_id": "third_hand_nt_raise",
+                    "explanation": "3. hånd inviterer/går i sans efter makkers sansåbning.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} sanssvar: OK med {display}.",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: third_hand_nt_raise",
+                    ],
+                }
+        log_lines.append(f"{hand_tag} sanssvar: afvist (for få værdier til invitation/udgang).")
+        return {
+            "dealer": third_seat,
+            "profile": None,
+            "bid": "PASS",
+            "display_bid": "PAS",
+            "rule_id": "third_hand_nt_pass",
+            "explanation": "3. hånd passer efter makkers sansåbning.",
+            "log_lines": log_lines + [
+                f"{hand_tag} valg: PAS",
+                f"{hand_tag} regel-id: third_hand_nt_pass",
+            ],
+        }
+
+    # Suit opening by partner: simple raise > new suit > pass.
+    partner_len = int(ctx["spades"] if partner_strain == "S" else ctx["hearts"] if partner_strain == "H" else ctx["diamonds"] if partner_strain == "D" else ctx["clubs"])
+
+    if partner_len >= 3 and int(ctx["hcp"]) >= 6:
+        cand = _lowest_higher_bid_for_strain(highest_contract, partner_strain)
+        if cand is not None:
+            display = _to_display_bid(cand)
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": cand,
+                "display_bid": display,
+                "rule_id": "third_hand_simple_raise",
+                "explanation": "3. hånd støtter makkers åbningsfarve.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} støtte: OK ({partner_len} trumf, {int(ctx['hcp'])} HCP).",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: third_hand_simple_raise",
+                ],
+            }
+
+    suit_lens = {
+        "S": int(ctx["spades"]),
+        "H": int(ctx["hearts"]),
+        "D": int(ctx["diamonds"]),
+        "C": int(ctx["clubs"]),
+    }
+    best_new = None
+    for s in sorted(("S", "H", "D", "C"), key=lambda x: (suit_lens[x], _strain_order(x)), reverse=True):
+        if s == partner_strain:
+            continue
+        if suit_lens[s] < 4 or int(ctx["hcp"]) < 6:
+            continue
+        cand = _lowest_higher_bid_for_strain(highest_contract, s)
+        if cand is None:
+            continue
+        best_new = cand
+        break
+
+    if best_new is not None:
+        display = _to_display_bid(best_new)
+        return {
+            "dealer": third_seat,
+            "profile": None,
+            "bid": best_new,
+            "display_bid": display,
+            "rule_id": "third_hand_new_suit_basic",
+            "explanation": "3. hånd melder ny farve som simpelt svar.",
+            "log_lines": log_lines + [
+                f"{hand_tag} ny-farve: OK med {display}.",
+                f"{hand_tag} valg: {display}",
+                f"{hand_tag} regel-id: third_hand_new_suit_basic",
+            ],
+        }
+
+    return {
+        "dealer": third_seat,
+        "profile": None,
+        "bid": "PASS",
+        "display_bid": "PAS",
+        "rule_id": "third_hand_pass",
+        "explanation": "3. hånd finder ikke et egnet svar og passer.",
+        "log_lines": log_lines + [
+            f"{hand_tag} svar: afvist (ingen støtte/ny farve med tilstrækkelige værdier).",
+            f"{hand_tag} valg: PAS",
+            f"{hand_tag} regel-id: third_hand_pass",
         ],
     }
 
 
 def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    """Suggest first two calls in round 1: dealer and second hand."""
+    """Suggest first three calls in round 1: dealer, second hand, and third hand."""
     first = suggest_opening_for_row(row)
     first_seat = _normalize_seat(first.get("dealer"))
     second_seat = _next_seat(first_seat)
@@ -682,30 +859,81 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
         first_bid = str(first.get("bid") or "PASS").upper()
         if first_bid in ("PASS", "PAS"):
             # If first hand passes, second hand is treated as opening seat.
-            row2 = dict(row)
-            row2["dealer"] = second_seat
-            second = suggest_opening_for_row(row2)
-            second["log_lines"] = [
+            second = _opening_from_specific_seat(
+                row,
+                second_seat,
                 "2H situation: 1. hånd PAS -> 2. hånd i åbningssituation.",
-            ] + list(second.get("log_lines") or [])
+            )
         else:
-            second = _suggest_second_hand_competitive(row, second_seat, first_bid)
+            second = _suggest_second_hand_competitive(row, second_seat, first_bid, hand_tag="2H")
+
+    third = None
+    third_seat = _next_seat(second.get("dealer") if isinstance(second, dict) else second_seat)
+    first_bid_txt = str(first.get("bid") or "PASS").upper()
+    second_bid_txt = str(second.get("bid") or "PASS").upper() if isinstance(second, dict) else "PASS"
+
+    if third_seat is not None:
+        if first_bid_txt in ("PASS", "PAS") and second_bid_txt in ("PASS", "PAS"):
+            third = _opening_from_specific_seat(
+                row,
+                third_seat,
+                "3H situation: 1H og 2H PAS -> 3H i åbningssituation.",
+            )
+        elif first_bid_txt in ("PASS", "PAS"):
+            if _parse_contract_bid(second_bid_txt) is not None:
+                third = _suggest_second_hand_competitive(
+                    row,
+                    third_seat,
+                    second_bid_txt,
+                    hand_tag="3H",
+                )
+            else:
+                third = _opening_from_specific_seat(
+                    row,
+                    third_seat,
+                    "3H fallback: 2H ikke tolket som kontrakt -> 3H i åbningssituation.",
+                )
+        elif _parse_contract_bid(first_bid_txt) is not None:
+            third = _suggest_third_hand_after_partner_open(
+                row,
+                third_seat,
+                first_bid_txt,
+                second_bid_txt,
+                hand_tag="3H",
+            )
+        else:
+            third = _opening_from_specific_seat(
+                row,
+                third_seat,
+                "3H fallback: 1H ikke tolket som kontrakt -> 3H i åbningssituation.",
+            )
 
     combined_log = [
         f"Runde 1: 1H({first_seat if first_seat else '?'})={first.get('display_bid', 'PAS')}",
     ]
+    first_display = str(first.get("display_bid") or "PAS")
     for line in list(first.get("log_lines") or []):
-        combined_log.append(f"1H {line}")
+        combined_log.append(f"{first_display} {line}")
 
     if second is not None:
+        second_display = str(second.get("display_bid") or "PAS")
         combined_log.append(
             f"Runde 1: 2H({second.get('dealer', '?')})={second.get('display_bid', 'PAS')}"
         )
         for line in list(second.get("log_lines") or []):
-            combined_log.append(line)
+            combined_log.append(f"{second_display} {line}")
+
+    if third is not None:
+        third_display = str(third.get("display_bid") or "PAS")
+        combined_log.append(
+            f"Runde 1: 3H({third.get('dealer', '?')})={third.get('display_bid', 'PAS')}"
+        )
+        for line in list(third.get("log_lines") or []):
+            combined_log.append(f"{third_display} {line}")
 
     return {
         "first_call": first,
         "second_call": second,
+        "third_call": third,
         "log_lines": combined_log,
     }
