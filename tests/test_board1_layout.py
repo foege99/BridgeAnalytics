@@ -648,6 +648,42 @@ def test_header_block_fallback_when_no_dealer_zone():
     assert '(ukendt)' in str(ws.cell(row=6, column=1).value)   # A6 Zone
 
 
+def test_bid_scaffold_headers_widths_and_default_green():
+    """Bid scaffold should reserve A20:D20+ with width 18 and green headers when no side is vulnerable."""
+    df = _make_df(vul='-')
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert [ws.cell(row=20, column=c).value for c in range(1, 5)] == ['S', 'V', 'N', 'Ø']
+    assert ws.column_dimensions['A'].width == 18
+    assert ws.column_dimensions['B'].width == 18
+    assert ws.column_dimensions['C'].width == 18
+    assert ws.column_dimensions['D'].width == 18
+
+    for c in range(1, 5):
+        rgb = str(ws.cell(row=20, column=c).fill.fgColor.rgb or '')
+        assert rgb.endswith('EAF2E3')
+
+
+def test_bid_scaffold_header_zone_coloring_ns_only():
+    """When NS are vulnerable, S/N headers are pink and V/Ø stay green."""
+    df = _make_df(vul='NS')
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    s_rgb = str(ws.cell(row=20, column=1).fill.fgColor.rgb or '')
+    v_rgb = str(ws.cell(row=20, column=2).fill.fgColor.rgb or '')
+    n_rgb = str(ws.cell(row=20, column=3).fill.fgColor.rgb or '')
+    o_rgb = str(ws.cell(row=20, column=4).fill.fgColor.rgb or '')
+
+    assert s_rgb.endswith('F4E4E8')
+    assert n_rgb.endswith('F4E4E8')
+    assert v_rgb.endswith('EAF2E3')
+    assert o_rgb.endswith('EAF2E3')
+
+
 def test_right_info_block_contract_fields():
     """Info block: Kontrakt at C2, Spilfører at C3, Udspil at C4, Resultat at C5."""
     df = _make_df(contract='4S', decl='N', lead='♥A', tricks=10)

@@ -392,9 +392,11 @@ def write_board1_layout_sheet(
             value=par_text if par_text is not None else "Par: (ukendt)")
 
     # --- Column widths ---
-    ws.column_dimensions['A'].width = 22
-    ws.column_dimensions['B'].width = 22
-    ws.column_dimensions['C'].width = 22
+    # Reserve A:D for the bidding sequence scaffold.
+    ws.column_dimensions['A'].width = 18
+    ws.column_dimensions['B'].width = 18
+    ws.column_dimensions['C'].width = 18
+    ws.column_dimensions['D'].width = 18
     ws.column_dimensions['E'].width = 25
     ws.column_dimensions['O'].width = 32
 
@@ -411,6 +413,52 @@ def write_board1_layout_sheet(
     _WHITE_FILL = 'FFFFFF'
     _HILITE_YELLOW = 'FFF2CC'
     _ZEBRA_FILL = 'F7F7F7'
+
+    # Bidding scaffold (visual placeholder, actual auction content comes later)
+    _BID_HDR_ROW = 20
+    _BID_DATA_START_ROW = 21
+    _BID_DATA_ROWS = 12
+    _BID_START_COL = 1  # A
+    _BID_HEADERS = ['S', 'V', 'N', 'Ø']
+    _BID_LIGHT_GREEN = 'EAF2E3'
+    _BID_LIGHT_PINK = 'F4E4E8'
+
+    zone_norm = str(zone_val).strip().upper() if zone_val is not None else ''
+    ns_vul = zone_norm in ('NS', 'ALLE', 'ALL')
+    ov_vul = zone_norm in ('ØV', 'EW', 'ALLE', 'ALL')
+    seat_side = {'S': 'NS', 'N': 'NS', 'V': 'ØV', 'Ø': 'ØV'}
+
+    thin_bid = Side(style='thin') if _styles_available else None
+
+    # Header row A20:D20 (bold + zone-aware color)
+    for i, seat in enumerate(_BID_HEADERS):
+        col_num = _BID_START_COL + i
+        hdr_cell = ws.cell(row=_BID_HDR_ROW, column=col_num, value=seat)
+        if Font is not None:
+            hdr_cell.font = Font(bold=True)
+        if _styles_available:
+            hdr_cell.alignment = Alignment(horizontal='center', vertical='center')
+            if thin_bid:
+                hdr_cell.border = Border(left=thin_bid, right=thin_bid, top=thin_bid, bottom=thin_bid)
+            is_vul = (
+                (seat_side.get(seat) == 'NS' and ns_vul)
+                or (seat_side.get(seat) == 'ØV' and ov_vul)
+            )
+            hdr_fill = _BID_LIGHT_PINK if is_vul else _BID_LIGHT_GREEN
+            hdr_cell.fill = PatternFill(fill_type='solid', fgColor=hdr_fill)
+
+    # Body rows A21:D32 (light green background).
+    # If bid text is present later, ensure hearts/diamonds render red.
+    for r in range(_BID_DATA_START_ROW, _BID_DATA_START_ROW + _BID_DATA_ROWS):
+        for c in range(_BID_START_COL, _BID_START_COL + len(_BID_HEADERS)):
+            bid_cell = ws.cell(row=r, column=c)
+            if _styles_available:
+                bid_cell.alignment = Alignment(horizontal='center', vertical='center')
+                if thin_bid:
+                    bid_cell.border = Border(left=thin_bid, right=thin_bid, top=thin_bid, bottom=thin_bid)
+                bid_cell.fill = PatternFill(fill_type='solid', fgColor=_BID_LIGHT_GREEN)
+            if bid_cell.value is not None and str(bid_cell.value).strip():
+                _write_with_red_suits(bid_cell, bid_cell.value)
 
     # Traveller headers (bridge.dk style)
     _TRAVELLER_HEADERS = [
