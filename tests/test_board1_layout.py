@@ -1104,6 +1104,58 @@ def test_opener_rebid_after_single_major_raise_strong_game():
     assert str(n_second.get('rule_id')) == 'opener_rebid_after_1M_2M_strong_game'
 
 
+def test_opener_rebid_after_single_major_raise_fit_shortness_upgrades_to_game():
+    """Established fit + shortness in favorable zone should upgrade a medium HCP hand to game."""
+    row = {
+        'dealer': 'Ø',
+        'vul': 'NS',
+        'N_hand': '98.A654.AQ92.986',
+        'Ø_hand': 'AKJT63.3.54.AKJ5',
+        'S_hand': '75.K82.T763.QT73',
+        'V_hand': 'Q42.QJT97.KJ8.42',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    e_second = _find_call(seq, 'Ø', 2)
+    assert e_second is not None
+    assert str(e_second.get('display_bid')) == '4♠'
+    assert str(e_second.get('rule_id')) == 'opener_rebid_after_1M_2M_strong_game'
+    assert any('fit-point:' in str(line) for line in (e_second.get('log_lines') or []))
+
+
+def test_opener_rebid_after_single_major_raise_fit_upgrade_can_be_disabled_from_yaml(monkeypatch):
+    """If fit playing-point upgrade is disabled in system definition, 16 HCP hand stays at 3M invite."""
+    row = {
+        'dealer': 'Ø',
+        'vul': 'NS',
+        'N_hand': '98.A654.AQ92.986',
+        'Ø_hand': 'AKJT63.3.54.AKJ5',
+        'S_hand': '75.K82.T763.QT73',
+        'V_hand': 'Q42.QJT97.KJ8.42',
+    }
+
+    def _fake_system_def(_seat):
+        return {
+            'hand_strength_model': {
+                'fit_playing_points': {
+                    'after_one_major_two_major_raise': {
+                        'enabled': False,
+                    }
+                }
+            }
+        }
+
+    monkeypatch.setattr(opening_bid_module, '_system_def_for_seat', _fake_system_def)
+
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    e_second = _find_call(seq, 'Ø', 2)
+    assert e_second is not None
+    assert str(e_second.get('display_bid')) == '3♠'
+    assert str(e_second.get('rule_id')) == 'opener_rebid_after_1M_2M_medium_invite'
+
+
 def test_fourth_suit_forcing_prefers_3nt_with_stopper():
     """With FSF active, a 4SF ask should be answered with 3NT when stopper is present."""
     row = {

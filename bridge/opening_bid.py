@@ -589,6 +589,155 @@ def _opener_strength_bucket_for_hcp(seat: str, hcp: int) -> str:
     return "weak" if int(hcp) <= weak_high else "medium"
 
 
+def _int_or_default(raw: Any, default: int) -> int:
+    try:
+        return int(raw)
+    except Exception:
+        return int(default)
+
+
+def _bool_or_default(raw: Any, default: bool) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    txt = str(raw or "").strip().lower()
+    if txt in ("enabled", "true", "1", "yes", "on"):
+        return True
+    if txt in ("disabled", "false", "0", "no", "off"):
+        return False
+    return bool(default)
+
+
+def _fit_playing_points_rules_for_seat(seat: str) -> dict[str, Any]:
+    model = _hand_strength_model_for_seat(seat)
+    if not isinstance(model, Mapping):
+        return {}
+
+    fit_raw = model.get("fit_playing_points", {}) or {}
+    if not isinstance(fit_raw, Mapping):
+        return {}
+
+    seq_raw = fit_raw.get("after_one_major_two_major_raise", fit_raw)
+    return seq_raw if isinstance(seq_raw, Mapping) else {}
+
+
+def _vulnerability_flags(vulnerability: Any) -> tuple[bool, bool]:
+    txt = str(vulnerability or "").strip().upper().replace(" ", "")
+    if txt in ("", "-", "NONE", "INGEN", "INGENIZONEN"):
+        return False, False
+    if txt in ("ALLE", "ALL", "BEGGE", "ALLEIZONEN"):
+        return True, True
+    if txt in ("NS", "NSIZONEN"):
+        return True, False
+    if txt in ("ØV", "OV", "EW", "ØVIZONEN", "EWIZONEN"):
+        return False, True
+
+    # Fallback for longer labels like "NS i zonen" / "ØV i zonen".
+    if "INGEN" in txt:
+        return False, False
+    ns_vul = "NS" in txt
+    ov_vul = ("ØV" in txt) or ("OV" in txt) or ("EW" in txt)
+    if "ALLE" in txt or "ALL" in txt:
+        return True, True
+    return ns_vul, ov_vul
+
+
+def _vulnerability_relation_for_side(vulnerability: Any, side: str) -> str:
+    ns_vul, ov_vul = _vulnerability_flags(vulnerability)
+    own_vul = ns_vul if side == "NS" else ov_vul
+    opp_vul = ov_vul if side == "NS" else ns_vul
+    if own_vul == opp_vul:
+        return "equal"
+    return "favorable" if (not own_vul and opp_vul) else "unfavorable"
+
+
+def _shortness_points_with_fit(
+    suit_lengths: Mapping[str, int],
+    trump_strain: str,
+    relation: str,
+    shortness_bonus_cfg: Mapping[str, Any] | None = None,
+) -> int:
+    defaults = {
+        "favorable": {"void": 5, "singleton": 3, "doubleton": 0},
+        "equal": {"void": 4, "singleton": 2, "doubleton": 0},
+        "unfavorable": {"void": 3, "singleton": 1, "doubleton": 0},
+    }
+
+    raw_cfg = shortness_bonus_cfg if isinstance(shortness_bonus_cfg, Mapping) else {}
+
+    def _relation_weights(key: str, fallback: Mapping[str, int]) -> dict[str, int]:
+        rel_raw = raw_cfg.get(key, {})
+        if not isinstance(rel_raw, Mapping):
+            rel_raw = {}
+        return {
+            "void": max(0, _int_or_default(rel_raw.get("void"), int(fallback["void"]))),
+            "singleton": max(0, _int_or_default(rel_raw.get("singleton"), int(fallback["singleton"]))),
+            "doubleton": max(0, _int_or_default(rel_raw.get("doubleton"), int(fallback["doubleton"]))),
+        }
+
+    weights = {
+        "favorable": _relation_weights("favorable_vulnerability", defaults["favorable"]),
+        "equal": _relation_weights("equal_vulnerability", defaults["equal"]),
+        "unfavorable": _relation_weights("unfavorable_vulnerability", defaults["unfavorable"]),
+    }
+    w = weights.get(str(relation), weights["equal"])
+
+    out = 0
+    for suit in ("S", "H", "D", "C"):
+        if suit == trump_strain:
+            continue
+        ln = int(suit_lengths.get(suit, 0))
+        if ln <= 0:
+            out += int(w["void"])
+        elif ln == 1:
+            out += int(w["singleton"])
+        elif ln == 2:
+            out += int(w["doubleton"])
+    return out
+
+
+def _playing_points_after_fit(
+    ctx: Mapping[str, Any],
+    seat: str,
+    trump_strain: str,
+    vulnerability: Any,
+) -> tuple[int, str, int, int, int]:
+    rules = _fit_playing_points_rules_for_seat(seat)
+    enabled = _bool_or_default(rules.get("enabled"), True)
+
+    shortness_bonus_cfg = rules.get("shortness_bonus", {})
+    if not isinstance(shortness_bonus_cfg, Mapping):
+        shortness_bonus_cfg = {}
+
+    trump_cfg = rules.get("trump_length_bonus", {})
+    if not isinstance(trump_cfg, Mapping):
+        trump_cfg = {}
+    trump_per_card = max(0, _int_or_default(trump_cfg.get("per_card_above_five"), 1))
+
+    suit_lengths = {
+        "S": int(ctx.get("spades", 0)),
+        "H": int(ctx.get("hearts", 0)),
+        "D": int(ctx.get("diamonds", 0)),
+        "C": int(ctx.get("clubs", 0)),
+    }
+    relation = _vulnerability_relation_for_side(vulnerability, _seat_side(seat))
+    trump_len = int(suit_lengths.get(trump_strain, 0))
+
+    if enabled:
+        shortness_pts = _shortness_points_with_fit(
+            suit_lengths,
+            trump_strain,
+            relation,
+            shortness_bonus_cfg,
+        )
+        trump_len_bonus = max(0, trump_len - 5) * trump_per_card
+    else:
+        shortness_pts = 0
+        trump_len_bonus = 0
+
+    playing_points = int(ctx.get("hcp", 0)) + shortness_pts + trump_len_bonus
+    return playing_points, relation, shortness_pts, trump_len_bonus, trump_len
+
+
 def _responder_strength_bucket_for_hcp(seat: str, hcp: int) -> str:
     model = _hand_strength_model_for_seat(seat)
     buckets = (model.get("responder_strength_buckets", {}) or {}) if isinstance(model, Mapping) else {}
@@ -1147,7 +1296,34 @@ def _suggest_third_hand_after_partner_open(
         and resp_lvl == 2
         and resp_strain == open_strain
     ):
-        opener_bucket = _opener_strength_bucket_for_hcp(third_seat, int(ctx["hcp"]))
+        base_hcp = int(ctx["hcp"])
+        opener_bucket_hcp = _opener_strength_bucket_for_hcp(third_seat, base_hcp)
+        play_pts, relation, shortness_pts, trump_len_bonus, trump_len = _playing_points_after_fit(
+            ctx,
+            third_seat,
+            open_strain,
+            row.get("vul") if isinstance(row, Mapping) else None,
+        )
+        opener_bucket_fit = _opener_strength_bucket_for_hcp(third_seat, play_pts)
+        bucket_rank = {"weak": 0, "medium": 1, "strong": 2}
+        opener_bucket = (
+            opener_bucket_fit
+            if bucket_rank.get(opener_bucket_fit, 0) > bucket_rank.get(opener_bucket_hcp, 0)
+            else opener_bucket_hcp
+        )
+        relation_dk = {
+            "favorable": "gunstig",
+            "equal": "lige",
+            "unfavorable": "ugunstig",
+        }.get(relation, "lige")
+        fit_lines = [
+            (
+                f"{hand_tag} fit-point: HCP {base_hcp} + shortness {shortness_pts} "
+                f"+ trumflængdebonus {trump_len_bonus} = {play_pts} "
+                f"({relation_dk} zone, trumf={trump_len})."
+            ),
+            f"{hand_tag} styrke: bucket {opener_bucket_hcp} -> {opener_bucket} efter fit-justering.",
+        ]
 
         if opener_bucket == "weak":
             return {
@@ -1157,7 +1333,7 @@ def _suggest_third_hand_after_partner_open(
                 "display_bid": "PAS",
                 "rule_id": "opener_rebid_after_1M_2M_weak_pass",
                 "explanation": "Åbner signoff med svag hånd efter enkel højning.",
-                "log_lines": log_lines + [
+                "log_lines": log_lines + fit_lines + [
                     f"{hand_tag} styrke: åbner bucket=weak ({int(ctx['hcp'])} HCP).",
                     f"{hand_tag} valg: PAS",
                     f"{hand_tag} regel-id: opener_rebid_after_1M_2M_weak_pass",
@@ -1175,8 +1351,8 @@ def _suggest_third_hand_after_partner_open(
                 "display_bid": display,
                 "rule_id": rid,
                 "explanation": "Åbner viser styrkeklasse efter 1M-2M.",
-                "log_lines": log_lines + [
-                    f"{hand_tag} styrke: åbner bucket={opener_bucket} ({int(ctx['hcp'])} HCP).",
+                "log_lines": log_lines + fit_lines + [
+                    f"{hand_tag} styrke: åbner bucket={opener_bucket} ({base_hcp} HCP).",
                     f"{hand_tag} valg: {display}",
                     f"{hand_tag} regel-id: {rid}",
                 ],

@@ -1266,6 +1266,27 @@ system_library:
           hcp_min: 13
           description: "Game-forcing or better responder strength"
 
+      fit_playing_points:
+        after_one_major_two_major_raise:
+          enabled: true
+
+          trump_length_bonus:
+            per_card_above_five: 1
+
+          shortness_bonus:
+            favorable_vulnerability:
+              void: 5
+              singleton: 3
+              doubleton: 0
+            equal_vulnerability:
+              void: 4
+              singleton: 2
+              doubleton: 0
+            unfavorable_vulnerability:
+              void: 3
+              singleton: 1
+              doubleton: 0
+
       responder_sequence_rules:
 
         one_minor_one_nt:
