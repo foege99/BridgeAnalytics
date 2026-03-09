@@ -187,6 +187,20 @@ system_library:
           first_king_suit:
             description: "Respond by first side suit where a king is held"
 
+      cuebid_control_type:
+        choices:
+          first_or_second_round:
+            description: "Cuebids show first- or second-round control"
+          first_round_only:
+            description: "Cuebids show first-round control only"
+
+      splinter_mode:
+        choices:
+          enabled:
+            description: "Splinter bids are available after fit is established"
+          disabled:
+            description: "No splinter bids; use control cuebids only"
+
     threshold_rule_definitions:
 
       hcp_minimum:
@@ -1152,6 +1166,46 @@ system_library:
             "6D": one_king
             "6H": two_kings
             "6S": three_kings
+
+    fit_slam_probe:
+
+      applies_when:
+        fit_established: true
+        combined_trump_length_min: 8
+        game_interest: invitational_or_better
+
+      control_cuebids:
+        order: up_the_line
+        cuebid_control_type_from_profile: cuebid_control_type
+        skipping_a_suit_denies_control: true
+        encourages_control_check_before_rkcb: true
+
+        control_definitions:
+          first_round_control: [ace, void]
+          second_round_control: [king, singleton]
+
+        heart_fit_examples:
+          sequence: "1H - 3H"
+          "3S":
+            meaning: cuebid_showing_spade_control
+            promises:
+              spade_control: true
+              control_level: first_or_second_round_or_first_round_only_by_profile
+
+      splinter_agreements:
+        enabled_from_profile: splinter_mode
+        requirements:
+          trump_support_min: 4
+          shortness: singleton_or_void
+          slam_interest: true
+        when_disabled:
+          treatment: "Use control cuebids instead of splinters"
+
+      rkcb_handoff_rules:
+        style_from_profile: slam_ask_style
+        recommended_entry_condition:
+          side_suit_controls_reviewed: true
+        note: "RKCB is used after side controls are clarified"
 
     competitive_bidding:
 

@@ -38,6 +38,8 @@ system_profiles:
 
     jordan_2nt: disabled
     lead_directing_doubles: enabled
+    cuebid_control_type: first_or_second_round
+    splinter_mode: disabled
     slam_ask_style: none
     rkcb_queen_ask: disabled
     rkcb_kings_ask: disabled
@@ -84,6 +86,8 @@ system_profiles:
 
     jordan_2nt: disabled
     lead_directing_doubles: enabled
+    cuebid_control_type: first_or_second_round
+    splinter_mode: enabled
     slam_ask_style: rkcb_1430
     rkcb_queen_ask: enabled
     rkcb_kings_ask: enabled
