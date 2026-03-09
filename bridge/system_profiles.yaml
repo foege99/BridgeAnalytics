@@ -1,0 +1,90 @@
+system_profiles:
+
+  nordic_standard_default:
+
+    system_definition: nordic_natural_core
+
+    description: >
+      Default opponent profile:
+      short club, 5-card majors, 15-17 NT denying 5-card major,
+      standard Stayman and Jacoby transfers,
+      strong artificial 2C with relay, standard weak twos in diamonds and majors,
+      2NT = 20-21 denying 5-card major, gambling 3NT,
+      standard 3- and 4-level preempts, and standard competitive methods.
+
+    minor_style: short_club_2plus
+    major_style: five_card_majors
+
+    opening_threshold_style: nordic_default
+
+    one_nt_major_policy: deny_any_5_card_major
+    two_nt_major_policy: deny_any_5_card_major
+
+    one_nt_response_style: standard_stayman_jacoby
+
+    two_clubs_opening_style: strong_artificial_min17_unbalanced
+    two_clubs_response_style: relay
+    second_negative: enabled
+    weak_diamond_variant: disabled
+
+    two_diamond_style: standard_weak_two_diamond
+
+    weak_two_major_style: standard_weak_two
+    weak_two_ogust_style: standard_ogust
+
+    three_level_preempt_style: standard_preempt_with_context
+    three_nt_opening_style: gambling_3nt
+    four_level_preempt_style: standard_four_level_preempt
+
+    jordan_2nt: disabled
+    lead_directing_doubles: enabled
+    slam_ask_style: none
+    rkcb_queen_ask: disabled
+    rkcb_kings_ask: disabled
+    rkcb_kings_response_mode: count_kings
+
+  henrik_per_custom:
+
+    system_definition: nordic_natural_core
+
+    description: >
+      Henrik/Per custom profile:
+      short club, 5-card majors, 15-17 NT allowing a 5-card major
+      unless the opposite major is doubleton,
+      custom 1NT response structure with major-inclusive Stayman,
+      2NT = 20-21 with same NT major rule,
+      Per/Henrik Multi-2C and Per/Henrik Multi-2D,
+      standard weak twos and agreed Ogust,
+      gambling 3NT, standard 3- and 4-level preempts,
+      inverted Bergen, Bekkasin/Stenberg, and standard competitive methods.
+
+    minor_style: short_club_2plus
+    major_style: five_card_majors
+
+    opening_threshold_style: nordic_default
+
+    one_nt_major_policy: allow_5m_except_opposite_major_doubleton
+    two_nt_major_policy: allow_5m_except_opposite_major_doubleton
+
+    one_nt_response_style: henrik_per_major_inclusive_stayman
+
+    two_clubs_opening_style: multi_two_clubs_per_henrik
+    two_clubs_response_style: custom_per_henrik
+    second_negative: disabled
+    weak_diamond_variant: disabled
+
+    two_diamond_style: multi_two_diamond_per_henrik
+
+    weak_two_major_style: standard_weak_two
+    weak_two_ogust_style: standard_ogust
+
+    three_level_preempt_style: standard_preempt_with_context
+    three_nt_opening_style: gambling_3nt
+    four_level_preempt_style: standard_four_level_preempt
+
+    jordan_2nt: disabled
+    lead_directing_doubles: enabled
+    slam_ask_style: rkcb_1430
+    rkcb_queen_ask: enabled
+    rkcb_kings_ask: enabled
+    rkcb_kings_response_mode: count_kings

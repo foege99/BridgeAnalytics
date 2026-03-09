@@ -1,0 +1,1374 @@
+system_library:
+
+  nordic_natural_core:
+
+    meta:
+      name: "Nordic Natural Core"
+      version: "0.9"
+      description: "Core opening, response and competitive structure with configurable variants"
+
+    honor_definitions:
+      akqj: [A, K, Q, J]
+      top3: [A, K, Q]
+
+    shape_definitions:
+      balanced_shapes:
+        - [4,3,3,3]
+        - [4,4,3,2]
+        - [5,3,3,2]
+
+      semibalanced_shapes:
+        - [5,4,2,2]
+
+    suit_ranking:
+      order_low_to_high: [C, D, H, S]
+
+    profile_options:
+
+      minor_style:
+        choices:
+          best_minor_3plus:
+            description: "1C = 3+, 1D = 3+, best minor"
+          short_club_2plus:
+            description: "1C = 2+, 1D = 4+, short club"
+
+      major_style:
+        choices:
+          four_card_majors:
+            description: "1H and 1S may be opened with 4 cards"
+          five_spades_four_hearts:
+            description: "1S promises 5+, 1H may be 4+"
+          five_card_majors:
+            description: "1H and 1S promise 5+"
+
+      opening_threshold_style:
+        choices:
+          nordic_default:
+            description: "Rule of 20 in 1st/2nd, light open in 3rd, Rule of 15 in 4th"
+          strict_12plus:
+            description: "12+ HCP in all seats"
+          custom:
+            description: "Seat-specific threshold choices"
+
+      one_nt_major_policy:
+        choices:
+          allow_5m_except_opposite_major_doubleton:
+            description: "1NT may include a 5-card major, but not if the opposite major is doubleton"
+          deny_any_5_card_major:
+            description: "1NT denies any 5-card major"
+
+      two_nt_major_policy:
+        choices:
+          allow_5m_except_opposite_major_doubleton:
+            description: "2NT may include a 5-card major, but not if the opposite major is doubleton"
+          deny_any_5_card_major:
+            description: "2NT denies any 5-card major"
+
+      one_nt_response_style:
+        choices:
+          standard_stayman_jacoby:
+            description: "Standard Stayman and Jacoby transfers"
+          henrik_per_major_inclusive_stayman:
+            description: "Henrik/Per 1NT response structure when opener may hold a 5-card major"
+
+      two_clubs_opening_style:
+        choices:
+          strong_artificial_min17_unbalanced:
+            description: "Strong artificial 2C. Unbalanced hands require at least 17 HCP"
+          multi_two_clubs_per_henrik:
+            description: "Per/Henrik Multi-2C structure"
+
+      two_clubs_response_style:
+        choices:
+          relay:
+            description: "2D waiting/relay response"
+          controls:
+            description: "Control responses"
+          points:
+            description: "Point responses"
+          custom_per_henrik:
+            description: "Per/Henrik custom responses"
+
+      two_diamond_style:
+        choices:
+          standard_weak_two_diamond:
+            description: "2D = weak two in diamonds"
+          multi_two_diamond_per_henrik:
+            description: "Per/Henrik Multi-2D"
+
+      weak_two_major_style:
+        choices:
+          standard_weak_two:
+            description: "2H/2S = weak two"
+
+      weak_two_ogust_style:
+        choices:
+          standard_ogust:
+            description: "Ogust according to defined response table"
+
+      second_negative:
+        choices:
+          enabled:
+            description: "Second negative is used"
+          disabled:
+            description: "Second negative is not used"
+
+      weak_diamond_variant:
+        choices:
+          enabled:
+            description: "2C structure may include weak diamond pass-out treatment"
+          disabled:
+            description: "No weak diamond pass-out treatment"
+
+      three_level_preempt_style:
+        choices:
+          standard_preempt_with_context:
+            description: "Standard 3-level preempts with passed-hand and vulnerability adjustments"
+          aggressive_preempt:
+            description: "Aggressive 3-level preempts"
+          disciplined_preempt:
+            description: "Disciplined 3-level preempts"
+
+      three_nt_opening_style:
+        choices:
+          gambling_3nt:
+            description: "Gambling 3NT showing a long solid or near-solid minor"
+          natural_3nt:
+            description: "Natural 3NT"
+
+      four_level_preempt_style:
+        choices:
+          standard_four_level_preempt:
+            description: "Standard 4-level preempts"
+
+      jordan_2nt:
+        choices:
+          enabled:
+            description: "Jordan 2NT is on"
+          disabled:
+            description: "Jordan 2NT is off"
+
+      lead_directing_doubles:
+        choices:
+          enabled:
+            description: "Double of artificial suit bids is lead-directing"
+          disabled:
+            description: "No lead-directing doubles agreement"
+
+      slam_ask_style:
+        choices:
+          none:
+            description: "No slam ask convention is used"
+          rkcb_1430:
+            description: "Roman Key Card Blackwood 1430"
+          rkcb_0314:
+            description: "Roman Key Card Blackwood 0314"
+          blackwood_marrow:
+            description: "Blackwood-Marrow"
+
+      rkcb_queen_ask:
+        choices:
+          enabled:
+            description: "Queen ask is enabled after RKCB"
+          disabled:
+            description: "Queen ask is disabled"
+
+      rkcb_kings_ask:
+        choices:
+          enabled:
+            description: "5NT asks for side kings (excluding trump king)"
+          disabled:
+            description: "No king ask after RKCB"
+
+      rkcb_kings_response_mode:
+        choices:
+          count_kings:
+            description: "Respond with number of side kings"
+          first_king_suit:
+            description: "Respond by first side suit where a king is held"
+
+    threshold_rule_definitions:
+
+      hcp_minimum:
+        description: "Open when hand has at least the stated HCP minimum"
+        parameters:
+          min_hcp: 12
+
+      rule_of_20:
+        description: "Open when HCP + lengths of the two longest suits is at least 20"
+
+      light_open:
+        description: "Lighter tactical opening, mainly for 3rd seat"
+        guideline:
+          normal_hcp_range: [8,12]
+          prefer_good_5_card_suit: true
+          prefer_major: true
+          tactical: true
+
+      rule_of_15:
+        description: "Open in 4th seat when HCP + spade length is at least 15"
+
+    opening_threshold_profiles:
+
+      nordic_default:
+        first_seat:
+          rule: rule_of_20
+        second_seat:
+          rule: rule_of_20
+        third_seat:
+          rule: light_open
+        fourth_seat:
+          rule: rule_of_15
+
+      strict_12plus:
+        first_seat:
+          rule: hcp_minimum
+          min_hcp: 12
+        second_seat:
+          rule: hcp_minimum
+          min_hcp: 12
+        third_seat:
+          rule: hcp_minimum
+          min_hcp: 12
+        fourth_seat:
+          rule: hcp_minimum
+          min_hcp: 12
+
+    opening_decision_flow:
+      - step: evaluate_opening_threshold
+      - step: evaluate_2C_opening
+      - step: evaluate_2NT_opening
+      - step: evaluate_1NT_opening
+      - step: evaluate_major_opening
+      - step: evaluate_minor_opening
+      - step: evaluate_weak_two_openings
+      - step: evaluate_2D_special_opening
+      - step: evaluate_three_level_preempts
+      - step: evaluate_3NT_opening
+      - step: evaluate_four_level_preempts
+      - step: if_no_opening_then_pass
+
+    general_suit_selection_principles:
+      primary_rule: "open longest suit"
+      tie_break_rules:
+        - condition: "equal_length == 4"
+          rule: "open lowest ranking suit"
+        - condition: "equal_length >= 5"
+          rule: "open highest ranking suit"
+
+    notrump_openings:
+
+      one_nt:
+        bid: "1NT"
+        strength:
+          min_hcp: 15
+          max_hcp: 17
+        shape_reference: balanced_shapes
+
+        rules:
+          - id: nt1_allow_5m_except_opposite_major_doubleton
+            when:
+              one_nt_major_policy: allow_5m_except_opposite_major_doubleton
+            condition: >
+              hcp >= 15 and hcp <= 17 and
+              shape in balanced_shapes and
+              not (spades == 5 and hearts == 2) and
+              not (hearts == 5 and spades == 2)
+            open: "1NT"
+
+          - id: nt1_deny_any_5_card_major
+            when:
+              one_nt_major_policy: deny_any_5_card_major
+            condition: >
+              hcp >= 15 and hcp <= 17 and
+              shape in balanced_shapes and
+              spades <= 4 and hearts <= 4
+            open: "1NT"
+
+        fallback:
+          if_not_allowed: evaluate_one_level_suit_opening
+
+      two_nt:
+        bid: "2NT"
+        strength:
+          min_hcp: 20
+          max_hcp: 21
+
+        balanced_shape_reference: balanced_shapes
+        semibalanced_allowed: true
+        semibalanced_shape_reference: semibalanced_shapes
+
+        semibalanced_requirements:
+          stopper_required_in_each_doubleton: true
+          acceptable_doubleton_stoppers:
+            - Ax
+            - Kx
+
+        rules:
+          - id: nt2_allow_5m_except_opposite_major_doubleton
+            when:
+              two_nt_major_policy: allow_5m_except_opposite_major_doubleton
+            condition: >
+              hcp >= 20 and hcp <= 21 and
+              (
+                shape in balanced_shapes or
+                shape in semibalanced_shapes
+              ) and
+              not (spades == 5 and hearts == 2) and
+              not (hearts == 5 and spades == 2)
+            open: "2NT"
+
+          - id: nt2_deny_any_5_card_major
+            when:
+              two_nt_major_policy: deny_any_5_card_major
+            condition: >
+              hcp >= 20 and hcp <= 21 and
+              (
+                shape in balanced_shapes or
+                shape in semibalanced_shapes
+              ) and
+              spades <= 4 and hearts <= 4
+            open: "2NT"
+
+        fallback:
+          if_not_allowed: evaluate_suit_opening_or_strong_opening
+
+    one_nt_response_system:
+
+      styles:
+
+        standard_stayman_jacoby:
+          description: >
+            Standard 1NT response structure with Stayman and Jacoby transfers.
+
+        henrik_per_major_inclusive_stayman:
+          description: >
+            1NT may contain a 5-card major. 2C asks opener to clarify
+            major-suit distribution and is at least invitational.
+
+      standard_stayman_jacoby:
+
+        responses:
+          "2C":
+            type: stayman
+            description: "Asks for 4-card major"
+          "2D":
+            type: jacoby_transfer
+            transfer_to: hearts
+          "2H":
+            type: jacoby_transfer
+            transfer_to: spades
+
+      henrik_per_major_inclusive_stayman:
+
+        opener_nt_range:
+          hcp_range: [15,17]
+
+        opener_shape_policy:
+          may_include_five_card_major: true
+
+        one_nt_opening_guidelines:
+          notes:
+            - "All balanced hands with 15-17 open 1NT, even with a 5-card major"
+            - "Prefer not to open 1NT with a poor doubleton in the opposite major"
+            - "Prefer 3 cards in the opposite major if opening 1NT with a 5-card major"
+            - "If values are concentrated in only two suits, opening one of the major may be preferable"
+
+        responses:
+
+          "2C":
+            type: artificial_major_structure_ask
+            hcp_min: 7
+            game_interest: invitational_or_better
+            responder_major_length_min: 3
+            promises_four_card_major: false
+            description: >
+              Asks opener about major-suit distribution. Does not promise a 4-card major.
+
+          "2D":
+            type: jacoby_transfer
+            transfer_to: hearts
+
+          "2H":
+            type: jacoby_transfer
+            transfer_to: spades
+
+          "3C":
+            type: one_suited_slam_try
+            suit: clubs
+            hcp_min: 16
+            suit_length_min: 6
+            slam_interest: true
+
+          "3D":
+            type: one_suited_slam_try
+            suit: diamonds
+            hcp_min: 16
+            suit_length_min: 6
+            slam_interest: true
+
+          "3H":
+            type: one_suited_slam_try
+            suit: hearts
+            hcp_min: 16
+            suit_length_min: 6
+            slam_interest: true
+
+          "3S":
+            type: one_suited_slam_try
+            suit: spades
+            hcp_min: 16
+            suit_length_min: 6
+            slam_interest: true
+
+        opener_rebids_after_2C:
+
+          "2D":
+            meaning: at_least_one_four_card_major
+            notes:
+              - "Shows at least one 4-card major"
+              - "With both 4-card majors, opener is minimum"
+
+          "2H":
+            meaning: five_hearts
+
+          "2S":
+            meaning: five_spades
+
+          "2NT":
+            meaning: no_four_card_major_minimum
+
+          "3NT":
+            meaning: no_four_card_major_maximum
+
+        responder_continuations_after_1NT_2C_2D:
+
+          "2H":
+            meaning: four_spades_maybe_four_hearts
+
+            opener_followup:
+              with_spade_fit:
+                bid: "4S"
+              without_spade_fit:
+                bid: "3NT"
+
+            responder_correction:
+              if_responder_also_has_four_hearts: true
+              action:
+                over_3NT: "4H"
+              note: >
+                This may place the contract in hearts from the responder side.
+
+          "2S":
+            meaning: four_hearts_denies_four_spades
+
+            opener_followup:
+              with_heart_fit:
+                bid: "4H"
+              without_heart_fit:
+                bid: "3NT"
+
+          "2NT":
+            meaning: invitational_without_four_card_major
+
+          "3NT":
+            meaning: to_play
+
+        responder_continuations_after_1NT_2C_2H:
+
+          "2NT":
+            meaning: invitational_without_fit
+
+          "3H":
+            meaning: invitational_with_fit
+
+          "3NT":
+            meaning: to_play
+            hcp_range: [10,15]
+
+          "4H":
+            meaning: to_play
+
+          "4NT":
+            meaning: quantitative_without_fit
+            hcp_min: 16
+            slam_target: invite_6NT
+
+          "5NT":
+            meaning: quantitative_without_fit
+            hcp_min: 16
+            slam_target: invite_7NT
+
+        responder_continuations_after_1NT_2C_2S:
+
+          "2NT":
+            meaning: invitational_without_fit
+
+          "3S":
+            meaning: invitational_with_fit
+
+          "3NT":
+            meaning: to_play
+
+          "4S":
+            meaning: to_play
+
+        responder_continuations_after_1NT_2C_2NT:
+
+          "PASS":
+            meaning: to_play
+
+          "3NT":
+            meaning: to_play
+
+        responder_continuations_after_1NT_2C_3NT:
+
+          "PASS":
+            meaning: to_play
+
+        transfer_followups:
+
+          after_1NT_2D_2H:
+
+            "3NT":
+              meaning: to_play
+              hearts_length: 5
+
+            "4H":
+              meaning: to_play
+              hearts_length: 6
+
+            new_suit:
+              meaning: strong_descriptive_rebid
+              forcing: game_force
+              slam_interest: possible
+              hearts_length_min: 5
+              new_suit_length_min: 4
+
+          after_1NT_2H_2S:
+
+            "3NT":
+              meaning: to_play
+              spades_length: 5
+
+            "4S":
+              meaning: to_play
+              spades_length: 6
+
+            new_suit:
+              meaning: strong_descriptive_rebid
+              forcing: game_force
+              slam_interest: possible
+              spades_length_min: 5
+              new_suit_length_min: 4
+
+    major_opening_logic:
+
+      - when:
+          major_style: four_card_majors
+        rules:
+          - condition: "hearts == 4 and spades == 4"
+            open: "1H"
+          - condition: "hearts >= 5 and spades >= 5 and hearts == spades"
+            open: "1S"
+          - condition: "spades > hearts and spades >= 4"
+            open: "1S"
+          - condition: "hearts > spades and hearts >= 4"
+            open: "1H"
+          - condition: "hearts >= 4 and spades < 4"
+            open: "1H"
+          - condition: "spades >= 4 and hearts < 4"
+            open: "1S"
+
+      - when:
+          major_style: five_spades_four_hearts
+        rules:
+          - condition: "spades >= 5 and hearts >= 4"
+            open: "1S"
+          - condition: "hearts >= 4 and spades < 5"
+            open: "1H"
+          - condition: "spades >= 5 and hearts < 4"
+            open: "1S"
+
+      - when:
+          major_style: five_card_majors
+        rules:
+          - condition: "hearts >= 5 and spades >= 5 and hearts == spades"
+            open: "1S"
+          - condition: "spades > hearts and spades >= 5"
+            open: "1S"
+          - condition: "hearts > spades and hearts >= 5"
+            open: "1H"
+          - condition: "hearts >= 5 and spades < 5"
+            open: "1H"
+          - condition: "spades >= 5 and hearts < 5"
+            open: "1S"
+
+    minor_opening_logic:
+
+      - when:
+          minor_style: best_minor_3plus
+        minimum_length:
+          clubs: 3
+          diamonds: 3
+        rules:
+          - condition: "clubs > diamonds"
+            open: "1C"
+          - condition: "diamonds > clubs"
+            open: "1D"
+          - condition: "clubs == 3 and diamonds == 3"
+            open: "1C"
+          - condition: "clubs == 4 and diamonds == 4"
+            default_open: "1C"
+            exception:
+              if:
+                clubs_honors_AKQJ: 0
+                diamonds_honors_AKQJ_min: 1
+              open: "1D"
+          - condition: "clubs == 5 and diamonds == 5"
+            open: "1D"
+          - condition: "clubs >= 6 and diamonds >= 6 and clubs == diamonds"
+            open: "1D"
+
+      - when:
+          minor_style: short_club_2plus
+        minimum_length:
+          clubs: 2
+          diamonds: 4
+        rules:
+          - condition: "diamonds >= 4 and diamonds > clubs"
+            open: "1D"
+          - condition: "clubs > diamonds"
+            open: "1C"
+          - condition: "clubs == 4 and diamonds == 4"
+            default_open: "1C"
+            exception:
+              if:
+                clubs_honors_AKQJ: 0
+                diamonds_honors_AKQJ_min: 1
+              open: "1D"
+          - condition: "clubs == 5 and diamonds == 5"
+            open: "1D"
+          - condition: "clubs >= 6 and diamonds >= 6 and clubs == diamonds"
+            open: "1D"
+          - condition: "diamonds < 4"
+            open: "1C"
+
+    two_clubs_system:
+
+      opening_styles:
+
+        strong_artificial_min17_unbalanced:
+          description: "Strong artificial 2C. Unbalanced hands require at least 17 HCP"
+
+          balanced_rebids:
+            "2NT":
+              hcp_range: [22,24]
+              shape: balanced
+            "3NT":
+              hcp_range: [25,27]
+              shape: balanced
+            "4NT":
+              hcp_range: [28,30]
+              shape: balanced
+
+          unbalanced_requirements:
+            hcp_min: 17
+            forcing: game_force
+
+        multi_two_clubs_per_henrik:
+          description: "Per/Henrik Multi-2C"
+
+          meanings:
+
+            strong_hand:
+              hcp_min: 22
+              playing_tricks: 7.5
+              suits_allowed: [C, H, S]
+              forcing: game_force
+
+            balanced_hand:
+              hcp_range: [18,19]
+              shape_reference: balanced_shapes
+              may_have_five_card_major: true
+
+          exclusions:
+            balanced_22plus:
+              action: redirect_to_multi_2D
+              description: "Balanced 22+ hands open Multi-2D, not 2C"
+
+            strong_diamonds:
+              action: redirect_to_multi_2D
+              description: "Strong diamond game-force hands open Multi-2D, not 2C"
+
+          responder_first_bid:
+            "2D":
+              type: relay
+              meaning: "Waiting/relay"
+            "2H":
+              type: stop_bid
+              points: [0,5]
+              suit_length: "5+"
+              meaning: "Stop response"
+            "2S":
+              type: stop_bid
+              points: [0,5]
+              suit_length: "5+"
+              meaning: "Stop response"
+
+          opener_second_bid:
+            after_2D_relay:
+
+              strong_hand:
+                "3C":
+                  meaning: "Strong clubs, 22+ or 7.5 playing tricks"
+                "2H":
+                  meaning: "Strong hearts, 22+ or 7.5 playing tricks"
+                "2S":
+                  meaning: "Strong spades, 22+ or 7.5 playing tricks"
+
+              balanced_hand:
+                "2NT":
+                  hcp_range: [18,19]
+                  balanced: true
+                  may_have_five_card_major: true
+                  continuations:
+                    allow_stayman: true
+                    allow_transfers: true
+                    allow_invites: true
+
+          responder_obligations:
+            after_strong_suit_rebid:
+              description: "Responder is obliged to bid twice"
+
+              with_support:
+                minimum_range: [0,3]
+                action: cheapest_support_at_3_level
+                invitational_or_game_range: [4,8]
+                action_game: bid_game
+                slam_range: [9,12]
+                action_slam: slam_try
+
+              without_support:
+                action: bid_next_suit
+
+          notes:
+            - "2C-2D-2NT = 18-19 balanced, may include a 5-card major"
+            - "22+ balanced hands are handled by Multi-2D"
+            - "Strong diamond game-forcing hands are handled by Multi-2D"
+
+      response_styles:
+        relay:
+          description: "2D waiting/relay response"
+        controls:
+          description: "Control responses"
+        points:
+          description: "Point responses"
+        custom_per_henrik:
+          description: "Per/Henrik custom response structure"
+
+      standard_relay_structure:
+        first_response:
+          "2D":
+            type: waiting
+            meaning: "Relay / waiting bid"
+
+        second_negative:
+          enabled_by_profile_flag: true
+
+    weak_two_system:
+
+      standard_weak_two:
+        strength:
+          hcp_range: [6,10]
+
+        suit_length:
+          minimum: 6
+
+        suit_quality:
+          base_requirement: "minimum Q in opening suit"
+          if_hcp_equals_6: "minimum QJ in opening suit"
+          top_honor_definition: top3
+
+        openings:
+          "2D": weak_two
+          "2H": weak_two
+          "2S": weak_two
+
+        ogust:
+          "3C":
+            hcp_range: [6,8]
+            top_honors_in_trump_suit: 1
+          "3D":
+            hcp_range: [6,8]
+            top_honors_in_trump_suit: 2
+          "3H":
+            hcp_range: [9,10]
+            top_honors_in_trump_suit: 1
+          "3S":
+            hcp_range: [9,10]
+            top_honors_in_trump_suit: 2
+          "3NT":
+            hcp_range: [9,10]
+            top_honors_in_trump_suit: 3
+
+    two_diamond_system:
+
+      standard_weak_two_diamond:
+        description: "2D = standard weak two in diamonds"
+
+      multi_two_diamond_per_henrik:
+        description: "Per/Henrik Multi-2D"
+
+        opening_meanings:
+
+          weak_major:
+            hcp_range: [5,10]
+            minimum_range: [5,7]
+            maximum_range: [8,10]
+            shape: "6-card major"
+
+          strong_nt:
+            hcp_range: [22,24]
+            shape: "balanced_or_semi_balanced"
+
+          strong_diamonds:
+            hcp_min: 17
+            forcing: game_force
+            suit: diamonds
+            intention: "play diamonds from strong hand"
+
+        responses:
+          "2H":
+            type: pass_or_correct
+            meaning: "Default response without clear game interest"
+          "2S":
+            type: pass_or_correct_special
+            meaning: "Game opposite hearts, not opposite spades"
+          "2NT":
+            type: strong_relay
+            meaning: "Game force opposite weak major"
+
+        continuations:
+
+          after_2D_2H:
+            weak_major:
+              hearts: pass
+              spades: "2S"
+            strong_nt:
+              bid: "2NT"
+            strong_diamonds:
+              bid: "3D"
+
+          after_2D_2S:
+            weak_major:
+              spades: pass_or_correct
+              hearts_minimum: "3H"
+              hearts_maximum: "2NT"
+
+          after_2D_2NT:
+            weak_major:
+              "3C":
+                meaning: "maximum weak major, major not yet disclosed"
+
+            relay_after_3C:
+              "3D":
+                meaning: "asks which major should NOT be trumps"
+
+            responses_to_3D:
+              "3H":
+                meaning: "actual suit is spades"
+              "3S":
+                meaning: "actual suit is hearts"
+
+    three_level_preempt_system:
+
+      styles:
+
+        standard_preempt_with_context:
+          strength:
+            hcp_range: [6,10]
+
+          suit_length:
+            minimum: 7
+
+          suit_quality:
+            default_requirement: "minimum QJ in opening suit"
+
+          context_adjustments:
+            passed_hand:
+              allow_more_aggressive_preempt: true
+              reduced_quality_requirement: "minimum Q in opening suit"
+            favorable_vulnerability:
+              allow_more_aggressive_preempt: true
+              reduced_quality_requirement: "minimum Q in opening suit"
+
+          strategic_notes:
+            loser_trick_guideline_available: true
+
+          openings:
+            "3C": preempt
+            "3D": preempt
+            "3H": preempt
+            "3S": preempt
+
+        aggressive_preempt:
+          strength:
+            hcp_range: [5,10]
+          suit_length:
+            minimum: 6
+          suit_quality:
+            default_requirement: "minimum Q in opening suit"
+          openings:
+            "3C": preempt
+            "3D": preempt
+            "3H": preempt
+            "3S": preempt
+
+        disciplined_preempt:
+          strength:
+            hcp_range: [7,10]
+          suit_length:
+            minimum: 7
+          suit_quality:
+            default_requirement: "minimum QJ in opening suit"
+          openings:
+            "3C": preempt
+            "3D": preempt
+            "3H": preempt
+            "3S": preempt
+
+    three_nt_opening_system:
+
+      styles:
+
+        gambling_3nt:
+          suit:
+            allowed: [C, D]
+          suit_length:
+            minimum: 7
+          suit_quality:
+            requirement: "at least two of AKQ"
+          side_honors:
+            recommendation: "preferably no side A or K"
+          strength:
+            typical_hcp_range: [5,12]
+          objective:
+            description: "Take most tricks in the minor and rely on partner for one or two tricks"
+          responses:
+            default_style: natural_continuations
+            optional_convention:
+              four_clubs_ask_singleton:
+                enabled_by_default: false
+
+        natural_3nt:
+          description: "Natural 3NT opening"
+
+    four_level_preempt_system:
+
+      styles:
+
+        standard_four_level_preempt:
+          strength:
+            hcp_range: [6,10]
+          suit_length:
+            minimum: 8
+          suit_quality:
+            default_requirement: "minimum QJ in opening suit"
+          context_adjustments:
+            passed_hand:
+              allow_more_aggressive_preempt: true
+              reduced_quality_requirement: "minimum Q in opening suit"
+            favorable_vulnerability:
+              allow_more_aggressive_preempt: true
+              reduced_quality_requirement: "minimum Q in opening suit"
+          openings:
+            "4C": preempt
+            "4D": preempt
+            "4H": preempt
+            "4S": preempt
+
+    major_raise_system:
+
+      philosophy:
+        description: >
+          Direct raises of opener's major are weak. Constructive or strong
+          support (10+ HCP with 3+ trumps) should preferably be shown by an
+          artificial method first, to avoid ambiguity with natural 2/1
+          game-forcing responses.
+
+      inverted_bergen:
+        enabled: true
+        applies_after:
+          - "1H"
+          - "1S"
+        priority_rule:
+          description: "When available, inverted Bergen should be used first to show 4+ card support"
+        raises:
+          "3C":
+            support_min: 4
+            hcp_range: [9,11]
+            type: artificial_raise
+            meaning: inverted_bergen_stronger
+          "3D":
+            support_min: 4
+            hcp_range: [6,8]
+            type: artificial_raise
+            meaning: inverted_bergen_weaker
+        interference_rule:
+          description: "Inverted Bergen remains available only if the bid is still a jump after opponent interference"
+
+      direct_major_raises:
+        philosophy: weak_only
+        "2M":
+          support: 3
+          hcp_range: [6,9]
+          type: weak_raise
+          description: "Weak raise with three-card support"
+        "3M":
+          support: 4
+          hcp_range: [6,9]
+          type: weak_raise
+          description: "Weak raise with four-card support when Bergen is unavailable"
+        "4M":
+          support: 5
+          hcp_range: [6,9]
+          type: weak_preemptive_raise
+          description: "Preemptive raise with five-card support"
+
+      cue_raise_after_interference:
+        enabled: true
+        applies_when:
+          opponents_have_bid_a_suit: true
+          support_min: 3
+          hcp_min: 10
+        action:
+          bid: opponents_suit
+          type: cue_raise
+          meaning: "Artificial strong raise with 3+ trumps and 10+ HCP"
+
+      system_protection:
+        protect_two_over_one: true
+
+    major_game_raise_system:
+
+      bekkasin_stenberg:
+        enabled: true
+        applies_after:
+          - "1H"
+          - "1S"
+
+        response:
+          "2NT":
+            support_min: 4
+            hcp_min: 12
+            type: artificial_game_raise
+            description: "Bekkasin / Stenberg strong raise"
+
+        opener_rebids:
+          "3C":
+            meaning: minimum_hand
+            hcp_range: [12,14]
+          "3D":
+            meaning: extra_values_no_shortness
+            hcp_min: 16
+          "3H":
+            shortness: clubs
+          "3S":
+            shortness: diamonds
+          "3NT":
+            shortness: opposite_major
+          "4C":
+            shortness: clubs
+            void_allowed: true
+          "4D":
+            shortness: diamonds
+            void_allowed: true
+
+        responder_followup:
+          after_3C:
+            "3D":
+              type: relay
+              meaning: asks_opener_to_describe_further
+
+    slam_conventions:
+
+      rkcb:
+
+        ask_bid: "4NT"
+        trump_king_is_keycard: true
+
+        keycard_response_maps:
+          rkcb_1430:
+            "5C": one_or_four_keycards
+            "5D": zero_or_three_keycards
+            "5H": two_without_trump_queen
+            "5S": two_with_trump_queen
+
+          rkcb_0314:
+            "5C": zero_or_three_keycards
+            "5D": one_or_four_keycards
+            "5H": two_without_trump_queen
+            "5S": two_with_trump_queen
+
+        queen_ask:
+          enabled_by_profile_flag: true
+          ask_method: cheapest_non_trump
+          responses:
+            return_to_trump: denies_trump_queen
+            step_1_new_suit: has_trump_queen_no_side_king
+            step_2_plus: has_trump_queen_and_side_king
+
+        kings_ask:
+          enabled_by_profile_flag: true
+          ask_bid: "5NT"
+          exclude_trump_king: true
+
+          response_modes:
+            count_kings:
+              "6C": 0
+              "6D": 1
+              "6H": 2
+              "6S": 3
+
+            first_king_suit:
+              suit_order_reference: suit_ranking.order_low_to_high
+              meaning: "Bid first side suit where a king is held"
+
+      blackwood_marrow:
+
+        ace_ask:
+          ask_bid: "4NT"
+          responses:
+            "5C": zero_or_four_aces
+            "5D": one_ace
+            "5H": two_aces
+            "5S": three_aces
+
+        king_ask:
+          ask_bid: "5NT"
+          responses:
+            "6C": zero_or_four_kings
+            "6D": one_king
+            "6H": two_kings
+            "6S": three_kings
+
+    competitive_bidding:
+
+      overcalls:
+
+        one_level_overcall:
+          description: "Natural overcall at the one level"
+          strength:
+            hcp_range: [8,16]
+          suit_length:
+            minimum: 5
+          notes:
+            - "Good suit quality expected"
+            - "May be slightly lighter in favorable vulnerability"
+
+        two_level_overcall:
+          description: "Natural overcall at the two level"
+          strength:
+            hcp_range: [10,16]
+          suit_length:
+            minimum: 5
+
+        jump_overcall:
+          description: "Weak jump overcall"
+          strength:
+            hcp_range: [6,10]
+          suit_length:
+            minimum: 6
+          type: preemptive
+
+        one_nt_overcall:
+          description: "Natural 1NT overcall"
+          strength:
+            hcp_range: [15,18]
+          shape: balanced
+          requirements:
+            stopper_in_opponents_suit: true
+
+        cuebid_overcall:
+          style: michaels
+          michaels:
+            after_minor_opening:
+              shows: [hearts, spades]
+              strength:
+                hcp_range: [8,16]
+            after_major_opening:
+              shows: [other_major, unspecified_minor]
+              strength:
+                hcp_range: [8,16]
+
+      lead_directing_double_system:
+        enabled_by_profile_flag: true
+
+        applicability:
+          artificial_calls_only: true
+          require_named_suit: true
+          excluded_strains: [NT]
+
+        interpretation:
+          lead_requested: doubled_call_suit
+
+        exceptions:
+          natural_one_club_opening_double:
+            sequence: "(1C)-X"
+            if_1C_is_natural: true
+            meaning: takeout_double
+          artificial_notrump_calls:
+            condition: doubled_call_strain == NT
+            meaning: not_lead_directing
+
+      takeout_double:
+        description: "Classic takeout double showing support for unbid suits"
+
+        minimum_strength:
+          hcp_min: 12
+
+        shape_requirements:
+          shortness_in_opponents_suit: preferred
+          support_for_unbid_suits: required
+
+        typical_support_patterns:
+          after_1C:
+            expected_support_for: [diamonds, hearts, spades]
+          after_1D:
+            expected_support_for: [clubs, hearts, spades]
+          after_1H:
+            expected_support_for: [spades, clubs, diamonds]
+          after_1S:
+            expected_support_for: [hearts, clubs, diamonds]
+
+        rebid_structure:
+          pass_after_partner_bid:
+            meaning: "Minimum takeout double"
+          simple_raise_of_partner_suit:
+            meaning: "Support with minimum values"
+            strength:
+              hcp_range: [12,16]
+          new_suit_rebid:
+            meaning: "Stronger hand after takeout double"
+            strength:
+              hcp_min: 17
+            forcing: one_round
+          jump_new_suit:
+            meaning: "Very strong hand with good suit"
+            strength:
+              hcp_min: 18
+            forcing: strong
+          rebid_2NT:
+            meaning: "Strong balanced hand"
+            strength:
+              hcp_range: [18,19]
+            stopper_required: true
+          cuebid_opponents_suit:
+            meaning: "Strong hand asking partner to further describe"
+            forcing: true
+
+      negative_double_system:
+        enabled: true
+        applies_up_to:
+          level: "2S"
+        minimum_strength:
+          hcp_min: 6
+        general_principle:
+          description: >
+            Negative double by responder after opener's one-level opening and opponent's overcall.
+            Shows values and usually interest in one or more unbid suits, especially majors.
+            It is not primarily penalty-oriented.
+
+        standard_interpretations:
+          "1C-(1D)-X":
+            shows: [hearts_4plus, spades_4plus]
+          "1C-(1H)-X":
+            shows: [spades_4plus]
+            may_also_contain: [diamonds_tolerance]
+          "1C-(1S)-X":
+            shows: [hearts_4plus]
+            may_also_contain: [diamonds_tolerance]
+          "1D-(1H)-X":
+            shows: [spades_4plus]
+            may_also_contain: [clubs_tolerance]
+          "1D-(1S)-X":
+            shows: [hearts_4plus]
+            may_also_contain: [clubs_tolerance]
+          "1H-(1S)-X":
+            shows: [minors_interest]
+            may_also_contain: [stronger_hand_without_clean_natural_bid]
+          "1S-(2H)-X":
+            shows: [minors_interest]
+            may_also_contain: [stronger_hand_without_clean_natural_bid]
+
+      cue_raise_after_overcall:
+        enabled: true
+        strength:
+          hcp_min: 10
+        support:
+          minimum_trumps: 3
+        meaning:
+          type: artificial_raise
+          forcing: one_round
+
+      responses_to_takeout_double:
+
+        default_style:
+          description: >
+            Standard responses to takeout double without Jordan 2NT.
+            Cuebid of opponent's suit shows 12+ HCP and game interest
+            when responder has no clearer natural call.
+
+        new_suit_response:
+          principle:
+            show_longest_unbid_suit: true
+          preferred_length:
+            cards: 4
+          minimum_possible:
+            cards: 3
+          strength:
+            hcp_range: [0,9]
+          forcing: false
+
+        jump_new_suit:
+          meaning: invitational
+          hcp_range: [9,11]
+          suit_length_min: 5
+          forcing: one_round
+
+        notrump_responses_default:
+          "1NT":
+            meaning: natural
+            hcp_range: [6,10]
+            stopper_in_opponent_suit: true
+            shape: balanced
+          "2NT":
+            meaning: natural
+            hcp_range: [11,12]
+            stopper_in_opponent_suit: true
+            shape: balanced
+          "3NT":
+            meaning: natural
+            hcp_range: [13,15]
+            stopper_in_opponent_suit: true
+            shape: balanced
+
+        cuebid_of_opponents_suit:
+          meaning: strong_hand_without_clear_natural_bid
+          hcp_min: 12
+          forcing: one_round
+          game_interest: true
+
+        jordan_2nt_mode:
+          enabled_by_profile_flag: true
+          applies_when:
+            sequence: "opponent_opening - takeout_double - raise_of_opening_suit"
+          "2NT":
+            meaning: jordan_raise
+            support_min: 4
+            hcp_min: 10
+            forcing: one_round
+            artificial: true
+          notes:
+            - "When Jordan 2NT is enabled, 2NT is no longer natural in this position"

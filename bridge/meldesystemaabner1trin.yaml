@@ -1,0 +1,302 @@
+system: Nordic Standard
+version: 0.4
+
+profile_options:
+
+  minor_style:
+    default: best_minor_3plus
+    choices:
+      best_minor_3plus:
+        description: "1C = 3+, 1D = 3+, best minor"
+      short_club_2plus:
+        description: "1C = 2+, 1D = 4+, short club"
+
+  major_style:
+    default: four_card_majors
+    choices:
+      four_card_majors:
+        description: "1H and 1S may be opened with 4 cards"
+      five_spades_four_hearts:
+        description: "1S promises 5+, 1H may be 4+"
+      five_card_majors:
+        description: "1H and 1S promise 5+"
+
+  opening_threshold_style:
+    default: nordic_default
+    choices:
+      nordic_default:
+        description: "Rule of 20 in 1st/2nd, light opening in 3rd, Rule of 15 in 4th"
+      strict_12plus:
+        description: "12+ HCP in all seats"
+      custom:
+        description: "Seat-specific thresholds defined elsewhere"
+
+  one_nt_major_policy:
+    default: allow_5m_except_opposite_major_doubleton
+    choices:
+      allow_5m_except_opposite_major_doubleton:
+        description: "1NT may include a 5-card major, but not if the opposite major is doubleton"
+      deny_any_5_card_major:
+        description: "1NT denies any 5-card major"
+
+honor_definition:
+  counted_honors: [A, K, Q, J]
+
+shape_definitions:
+
+  balanced_shapes:
+    - [4,3,3,3]
+    - [4,4,3,2]
+    - [5,3,3,2]
+
+opening_thresholds:
+
+  nordic_default:
+    first_seat:
+      rule: rule_of_20
+    second_seat:
+      rule: rule_of_20
+    third_seat:
+      rule: light_open
+    fourth_seat:
+      rule: rule_of_15
+
+  strict_12plus:
+    first_seat:
+      rule: hcp_minimum
+      min_hcp: 12
+    second_seat:
+      rule: hcp_minimum
+      min_hcp: 12
+    third_seat:
+      rule: hcp_minimum
+      min_hcp: 12
+    fourth_seat:
+      rule: hcp_minimum
+      min_hcp: 12
+
+opening_decision_flow:
+  - step: evaluate_opening_threshold
+  - step: evaluate_1NT_opening
+  - step: if_1NT_not_allowed_then_evaluate_one_level_suit_opening
+  - step: if_no_opening_then_pass
+
+one_nt_fallback_rule:
+  description: "If hand has 15-17 HCP but does not qualify for 1NT under the selected NT policy, evaluate one-level suit opening."
+
+notrump_openings:
+
+  one_nt:
+    bid: "1NT"
+
+    strength:
+      min_hcp: 15
+      max_hcp: 17
+
+    shape_reference: balanced_shapes
+
+    options:
+      major_policy_source: one_nt_major_policy
+
+    rules:
+
+      - id: nt_allow_5m_except_opposite_major_doubleton
+        when:
+          one_nt_major_policy: allow_5m_except_opposite_major_doubleton
+        condition: >
+          hcp >= 15 and hcp <= 17 and
+          shape in balanced_shapes and
+          not (spades == 5 and hearts == 2) and
+          not (hearts == 5 and spades == 2)
+        open: "1NT"
+
+      - id: nt_deny_any_5_card_major
+        when:
+          one_nt_major_policy: deny_any_5_card_major
+        condition: >
+          hcp >= 15 and hcp <= 17 and
+          shape in balanced_shapes and
+          spades <= 4 and hearts <= 4
+        open: "1NT"
+
+    fallback:
+      if_not_allowed: evaluate_one_level_suit_opening
+
+general_suit_selection_principles:
+  primary_rule: "open longest suit"
+  tie_break_rules:
+    - condition: "equal_length == 4"
+      rule: "open lowest ranking suit"
+    - condition: "equal_length >= 5"
+      rule: "open highest ranking suit"
+
+suit_ranking:
+  order_low_to_high: [C, D, H, S]
+
+major_opening_logic:
+
+  - when:
+      major_style: four_card_majors
+    rules:
+      - id: m4_equal_4_4
+        condition: "hearts == 4 and spades == 4"
+        open: "1H"
+        note: "Lowest of equal 4-card majors"
+
+      - id: m4_equal_5plus_5plus
+        condition: "hearts >= 5 and spades >= 5 and hearts == spades"
+        open: "1S"
+        note: "Highest of equal 5+ card majors"
+
+      - id: m4_spades_longer
+        condition: "spades > hearts and spades >= 4"
+        open: "1S"
+
+      - id: m4_hearts_longer
+        condition: "hearts > spades and hearts >= 4"
+        open: "1H"
+
+      - id: m4_hearts_only
+        condition: "hearts >= 4 and spades < 4"
+        open: "1H"
+
+      - id: m4_spades_only
+        condition: "spades >= 4 and hearts < 4"
+        open: "1S"
+
+  - when:
+      major_style: five_spades_four_hearts
+    rules:
+      - id: m54_5s_4h_or_more
+        condition: "spades >= 5 and hearts >= 4"
+        open: "1S"
+
+      - id: m54_hearts_only
+        condition: "hearts >= 4 and spades < 5"
+        open: "1H"
+
+      - id: m54_spades_only
+        condition: "spades >= 5 and hearts < 4"
+        open: "1S"
+
+  - when:
+      major_style: five_card_majors
+    rules:
+      - id: m5_equal_5_5
+        condition: "hearts >= 5 and spades >= 5 and hearts == spades"
+        open: "1S"
+        note: "Highest of equal 5+ card majors"
+
+      - id: m5_spades_longer
+        condition: "spades > hearts and spades >= 5"
+        open: "1S"
+
+      - id: m5_hearts_longer
+        condition: "hearts > spades and hearts >= 5"
+        open: "1H"
+
+      - id: m5_hearts_only
+        condition: "hearts >= 5 and spades < 5"
+        open: "1H"
+
+      - id: m5_spades_only
+        condition: "spades >= 5 and hearts < 5"
+        open: "1S"
+
+minor_opening_logic:
+
+  - when:
+      minor_style: best_minor_3plus
+
+    minimum_length:
+      clubs: 3
+      diamonds: 3
+
+    rules:
+      - id: bm_clubs_longer
+        condition: "clubs > diamonds"
+        open: "1C"
+
+      - id: bm_diamonds_longer
+        condition: "diamonds > clubs"
+        open: "1D"
+
+      - id: bm_equal_3_3
+        condition: "clubs == 3 and diamonds == 3"
+        open: "1C"
+
+      - id: bm_equal_4_4
+        condition: "clubs == 4 and diamonds == 4"
+        default_open: "1C"
+        exception:
+          if:
+            clubs_honors_AKQJ: 0
+            diamonds_honors_AKQJ_min: 1
+          open: "1D"
+
+      - id: bm_equal_5_5
+        condition: "clubs == 5 and diamonds == 5"
+        open: "1D"
+
+      - id: bm_equal_6plus_6plus
+        condition: "clubs >= 6 and diamonds >= 6 and clubs == diamonds"
+        open: "1D"
+
+  - when:
+      minor_style: short_club_2plus
+
+    minimum_length:
+      clubs: 2
+      diamonds: 4
+
+    rules:
+      - id: sc_diamonds_longer
+        condition: "diamonds >= 4 and diamonds > clubs"
+        open: "1D"
+
+      - id: sc_clubs_longer
+        condition: "clubs > diamonds"
+        open: "1C"
+
+      - id: sc_equal_4_4
+        condition: "clubs == 4 and diamonds == 4"
+        default_open: "1C"
+        exception:
+          if:
+            clubs_honors_AKQJ: 0
+            diamonds_honors_AKQJ_min: 1
+          open: "1D"
+
+      - id: sc_equal_5_5
+        condition: "clubs == 5 and diamonds == 5"
+        open: "1D"
+
+      - id: sc_equal_6plus_6plus
+        condition: "clubs >= 6 and diamonds >= 6 and clubs == diamonds"
+        open: "1D"
+
+      - id: sc_diamonds_not_available
+        condition: "diamonds < 4"
+        open: "1C"
+
+one_level_openings:
+
+  - bid: "1C"
+    category: natural_opening
+    meaning: "Club opening at one-level according to selected minor style"
+    forcing: false
+
+  - bid: "1D"
+    category: natural_opening
+    meaning: "Diamond opening at one-level according to selected minor style"
+    forcing: false
+
+  - bid: "1H"
+    category: natural_opening
+    meaning: "Heart opening at one-level according to selected major style"
+    forcing: false
+
+  - bid: "1S"
+    category: natural_opening
+    meaning: "Spade opening at one-level according to selected major style"
+    forcing: false

@@ -1,0 +1,9 @@
+pair_registry:
+
+  - pair_id: henrik_per_pair
+    players:
+      north_or_east: "Henrik Friis"
+      south_or_west: "Per Føge Jensen"
+    system_profile: henrik_per_custom
+
+default_system_profile: nordic_standard_default

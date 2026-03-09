@@ -1,0 +1,14 @@
+board_context:
+
+  pair_id: henrik_per_pair
+
+  pair_side: NS   # NS eller EW
+
+  opponents:
+
+    north: null
+    south: null
+    east: "Opponent A"
+    west: "Opponent B"
+
+  seating_override: null
