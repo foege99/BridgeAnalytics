@@ -456,6 +456,7 @@ def write_board1_layout_sheet(
     first_guess = round1_guess.get('first_call', {}) if isinstance(round1_guess, dict) else {}
     second_guess = round1_guess.get('second_call', {}) if isinstance(round1_guess, dict) else {}
     third_guess = round1_guess.get('third_call', {}) if isinstance(round1_guess, dict) else {}
+    fourth_guess = round1_guess.get('fourth_call', {}) if isinstance(round1_guess, dict) else {}
     opening_log_lines = round1_guess.get('log_lines') if isinstance(round1_guess, dict) else []
     bid_col_by_seat = {'S': 1, 'V': 2, 'N': 3, 'Ø': 4}
 
@@ -465,6 +466,8 @@ def write_board1_layout_sheet(
     second_display = second_guess.get('display_bid') if isinstance(second_guess, dict) else None
     third_seat = third_guess.get('dealer') if isinstance(third_guess, dict) else None
     third_display = third_guess.get('display_bid') if isinstance(third_guess, dict) else None
+    fourth_seat = fourth_guess.get('dealer') if isinstance(fourth_guess, dict) else None
+    fourth_display = fourth_guess.get('display_bid') if isinstance(fourth_guess, dict) else None
     call_sequence = []
     if first_seat in bid_col_by_seat and first_display:
         call_sequence.append((first_seat, first_display))
@@ -472,6 +475,8 @@ def write_board1_layout_sheet(
         call_sequence.append((second_seat, second_display))
     if third_seat in bid_col_by_seat and third_display:
         call_sequence.append((third_seat, third_display))
+    if fourth_seat in bid_col_by_seat and fourth_display:
+        call_sequence.append((fourth_seat, fourth_display))
 
     # Place calls in auction order: move right on same row; wrap to next row when needed.
     cur_row = _BID_DATA_START_ROW

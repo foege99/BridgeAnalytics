@@ -495,6 +495,18 @@ def _next_seat(seat: str | None) -> str | None:
     return None
 
 
+def _partner_of(seat: str | None) -> str | None:
+    if seat == "N":
+        return "S"
+    if seat == "S":
+        return "N"
+    if seat == "Ø":
+        return "V"
+    if seat == "V":
+        return "Ø"
+    return None
+
+
 def _parse_contract_bid(bid: str | None) -> tuple[int, str] | None:
     if bid is None:
         return None
@@ -702,6 +714,7 @@ def _suggest_third_hand_after_partner_open(
     partner_opening_bid: str,
     second_call_bid: str | None,
     hand_tag: str = "3H",
+    reserved_cuebid_strains: list[str] | None = None,
 ) -> dict[str, Any]:
     hand_col = f"{third_seat}_hand"
     hand_dot = row.get(hand_col)
@@ -739,11 +752,19 @@ def _suggest_third_hand_after_partner_open(
     ctx = _build_context(str(hand_dot))
     partner_lvl, partner_strain = parsed_partner
     highest_contract = _highest_contract_bid_text(partner_opening_bid, second_call_bid)
+    reserved = {
+        str(s).upper()
+        for s in (reserved_cuebid_strains or [])
+        if str(s).upper() in ("S", "H", "D", "C")
+    }
 
     log_lines = [
         f"{hand_tag} kontekst: makker åbnede {_to_display_bid(partner_opening_bid)}, 2H={_to_display_bid(second_call_bid or 'PASS')}.",
         f"{hand_tag} hånd: {int(ctx['hcp'])} HCP, shape {_shape_text(ctx)}.",
     ]
+    if reserved:
+        reserved_txt = "/".join(_to_display_bid(f"1{s}")[1:] for s in sorted(reserved, key=_strain_order))
+        log_lines.append(f"{hand_tag} note: cuebid-farver reserveret ({reserved_txt}).")
 
     # 3H when partner opened NT: simple invite/game or pass.
     if partner_strain == "NT":
@@ -809,6 +830,8 @@ def _suggest_third_hand_after_partner_open(
     for s in sorted(("S", "H", "D", "C"), key=lambda x: (suit_lens[x], _strain_order(x)), reverse=True):
         if s == partner_strain:
             continue
+        if s in reserved:
+            continue
         if suit_lens[s] < 4 or int(ctx["hcp"]) < 6:
             continue
         cand = _lowest_higher_bid_for_strain(highest_contract, s)
@@ -849,7 +872,7 @@ def _suggest_third_hand_after_partner_open(
 
 
 def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    """Suggest first three calls in round 1: dealer, second hand, and third hand."""
+    """Suggest first four calls in round 1: dealer, second, third, and fourth hand."""
     first = suggest_opening_for_row(row)
     first_seat = _normalize_seat(first.get("dealer"))
     second_seat = _next_seat(first_seat)
@@ -894,12 +917,15 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                     "3H fallback: 2H ikke tolket som kontrakt -> 3H i åbningssituation.",
                 )
         elif _parse_contract_bid(first_bid_txt) is not None:
+            second_parsed = _parse_contract_bid(second_bid_txt)
+            reserved_for_third = [second_parsed[1]] if second_parsed is not None else []
             third = _suggest_third_hand_after_partner_open(
                 row,
                 third_seat,
                 first_bid_txt,
                 second_bid_txt,
                 hand_tag="3H",
+                reserved_cuebid_strains=reserved_for_third,
             )
         else:
             third = _opening_from_specific_seat(
@@ -907,6 +933,74 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                 third_seat,
                 "3H fallback: 1H ikke tolket som kontrakt -> 3H i åbningssituation.",
             )
+
+    fourth = None
+    fourth_seat = _next_seat(third.get("dealer") if isinstance(third, dict) else third_seat)
+    third_bid_txt = str(third.get("bid") or "PASS").upper() if isinstance(third, dict) else "PASS"
+
+    if fourth_seat is not None:
+        all_three_pass = (
+            first_bid_txt in ("PASS", "PAS")
+            and second_bid_txt in ("PASS", "PAS")
+            and third_bid_txt in ("PASS", "PAS")
+        )
+        if all_three_pass:
+            fourth = _opening_from_specific_seat(
+                row,
+                fourth_seat,
+                "4H situation: 1H, 2H og 3H PAS -> 4H i åbningssituation.",
+            )
+        else:
+            prior_calls = [
+                (first_seat, first_bid_txt),
+                (second.get("dealer") if isinstance(second, dict) else second_seat, second_bid_txt),
+                (third.get("dealer") if isinstance(third, dict) else third_seat, third_bid_txt),
+            ]
+            partner_seat = _partner_of(fourth_seat)
+            partner_contract_bid = None
+            opponent_contract_bids: list[str] = []
+
+            for seat, bid in prior_calls:
+                seat_norm = _normalize_seat(seat)
+                if seat_norm is None:
+                    continue
+                if _parse_contract_bid(bid) is None:
+                    continue
+                if seat_norm == partner_seat:
+                    partner_contract_bid = bid
+                else:
+                    opponent_contract_bids.append(bid)
+
+            if partner_contract_bid is not None:
+                opp_highest = _highest_contract_bid_text(*opponent_contract_bids)
+                reserved_for_fourth = []
+                for b in opponent_contract_bids:
+                    p = _parse_contract_bid(b)
+                    if p is not None:
+                        reserved_for_fourth.append(p[1])
+                fourth = _suggest_third_hand_after_partner_open(
+                    row,
+                    fourth_seat,
+                    partner_contract_bid,
+                    opp_highest,
+                    hand_tag="4H",
+                    reserved_cuebid_strains=reserved_for_fourth,
+                )
+            else:
+                highest_contract = _highest_contract_bid_text(first_bid_txt, second_bid_txt, third_bid_txt)
+                if highest_contract is not None:
+                    fourth = _suggest_second_hand_competitive(
+                        row,
+                        fourth_seat,
+                        highest_contract,
+                        hand_tag="4H",
+                    )
+                else:
+                    fourth = _opening_from_specific_seat(
+                        row,
+                        fourth_seat,
+                        "4H fallback: ingen tolkelig kontrakt før 4H -> åbningssituation.",
+                    )
 
     combined_log = [
         f"Runde 1: 1H({first_seat if first_seat else '?'})={first.get('display_bid', 'PAS')}",
@@ -931,9 +1025,18 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
         for line in list(third.get("log_lines") or []):
             combined_log.append(f"{third_display} {line}")
 
+    if fourth is not None:
+        fourth_display = str(fourth.get("display_bid") or "PAS")
+        combined_log.append(
+            f"Runde 1: 4H({fourth.get('dealer', '?')})={fourth.get('display_bid', 'PAS')}"
+        )
+        for line in list(fourth.get("log_lines") or []):
+            combined_log.append(f"{fourth_display} {line}")
+
     return {
         "first_call": first,
         "second_call": second,
         "third_call": third,
+        "fourth_call": fourth,
         "log_lines": combined_log,
     }

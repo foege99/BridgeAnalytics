@@ -878,6 +878,67 @@ def test_bid_scaffold_log_lines_start_with_current_bid():
     assert any(line.startswith('2♠ ') for line in log_lines)
 
 
+def test_bid_scaffold_fourth_hand_bid_and_wrap_after_three_calls():
+    """Fourth hand should be added to auction sequence with normal wrap rules."""
+    df = _make_df(
+        dealer='N',
+        N_hand='T9842.83.742.953',          # 1H PAS at C21
+        Ø_hand='T763.942.J86.874',          # 2H PAS at D21
+        S_hand='AKQJ9.8765.3.K2',           # 3H 1S at A22
+        V_hand='82.AKQJ97.54.842',          # 4H 2H at B22
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=21, column=3).value == 'PAS'
+    assert ws.cell(row=21, column=4).value == 'PAS'
+    assert ws.cell(row=22, column=1).value == '1♠'
+    assert str(ws.cell(row=22, column=2).value) == '2♥'
+
+
+def test_bid_scaffold_log_includes_fourth_hand_with_bid_prefix():
+    """Log should include 4H summary and lines prefixed with 4H's actual bid."""
+    df = _make_df(
+        dealer='N',
+        N_hand='T9842.83.742.953',
+        Ø_hand='T763.942.J86.874',
+        S_hand='AKQJ9.8765.3.K2',
+        V_hand='82.AKQJ97.54.842',
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    log_lines = [
+        str(ws.cell(row=r, column=1).value or '')
+        for r in range(37, 80)
+    ]
+    assert any('Runde 1: 4H(V)=2♥' in line for line in log_lines)
+    assert any(line.startswith('2♥ 4H ') for line in log_lines)
+
+
+def test_bid_scaffold_fourth_hand_avoids_enemy_suit_natural_bid():
+    """After 1♥ - 2♦ - 2♠, fourth hand should not use enemy ♥ as natural bid."""
+    df = _make_df(
+        dealer='N',
+        N_hand='JT64.AKJT9.95.Q6',       # 1H = 1♥
+        Ø_hand='A7.3.AKJ732.T942',       # 2H = 2♦
+        S_hand='KQ852.Q2.Q64.873',       # 3H = 2♠
+        V_hand='93.87654.T8.AKJ5',       # 4H should avoid 3♥ as natural (cuebid suit)
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert str(ws.cell(row=21, column=3).value) == '1♥'
+    assert str(ws.cell(row=21, column=4).value) == '2♦'
+    assert ws.cell(row=22, column=1).value == '2♠'
+    # Fourth call at B22 must not be 3♥; with this heuristic it becomes 3♣.
+    assert str(ws.cell(row=22, column=2).value) != '3♥'
+    assert str(ws.cell(row=22, column=2).value) == '3♣'
+
+
 def test_right_info_block_contract_fields():
     """Info block: Kontrakt at C2, Spilfører at C3, Udspil at C4, Resultat at C5."""
     df = _make_df(contract='4S', decl='N', lead='♥A', tricks=10)
