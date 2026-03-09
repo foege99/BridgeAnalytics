@@ -1192,15 +1192,87 @@ system_library:
 
         cuebid_overcall:
           style: michaels
+          description: "Treatment-aware Michaels over minor openings"
+
           michaels:
-            after_minor_opening:
-              shows: [hearts, spades]
-              strength:
-                hcp_range: [8,16]
+
+            default_strength:
+              hcp_range: [8,16]
+
+            over_minor_openings:
+
+              by_opponent_minor_treatment:
+
+                short_club_2plus:
+                  over_1C:
+                    "2C":
+                      type: natural_overcall
+                      shows: [clubs]
+                      suit_length:
+                        minimum: 6
+                      strength:
+                        hcp_range: [8,16]
+                      description: "Natural overcall when 1C may be short (down to 2 cards)"
+                    "2D":
+                      type: michaels_cuebid
+                      shows: [hearts, spades]
+                      strength:
+                        hcp_range: [8,16]
+
+                  over_1D:
+                    "2D":
+                      type: michaels_cuebid
+                      shows: [hearts, spades]
+                      strength:
+                        hcp_range: [8,16]
+
+                best_minor_3plus:
+                  over_1C:
+                    "2C":
+                      type: michaels_cuebid
+                      shows: [hearts, spades]
+                      strength:
+                        hcp_range: [8,16]
+
+                  over_1D:
+                    "2D":
+                      type: michaels_cuebid
+                      shows: [hearts, spades]
+                      strength:
+                        hcp_range: [8,16]
+
             after_major_opening:
               shows: [other_major, unspecified_minor]
               strength:
                 hcp_range: [8,16]
+
+            advancer_responses:
+
+              after_michaels_over_minor:
+                "2H":
+                  meaning: preference_to_hearts
+                  forcing: false
+                "2S":
+                  meaning: preference_to_spades
+                  forcing: false
+                "2NT":
+                  meaning: invitational_plus_with_major_fit
+                  forcing: one_round
+                raise_known_major:
+                  meaning: constructive_or_better_support
+                jump_to_game:
+                  meaning: to_play_with_fit
+
+              after_michaels_over_major:
+                "2NT":
+                  meaning: asks_for_minor
+                  forcing: one_round
+
+                over_2NT_ask:
+                  "3C":
+                    meaning: clubs
+                  "3D":
+                    meaning: diamonds
 
       lead_directing_double_system:
         enabled_by_profile_flag: true
