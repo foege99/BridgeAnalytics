@@ -172,14 +172,14 @@ def test_traveller_has_lead_type_last_column():
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    assert ws.cell(row=1, column=7).value == 'Spilfører'    # G1
-    assert ws.cell(row=2, column=7).value == 'N'            # G2
-    assert ws.cell(row=1, column=18).value == 'Lead type'   # R1
-    assert ws.cell(row=1, column=16).value == 'Pct Defense' # P1
-    assert ws.cell(row=1, column=17).value == 'Pct Decl'    # Q1
-    assert ws.cell(row=2, column=16).value == 59.0          # defense side (ØV)
-    assert ws.cell(row=2, column=17).value == 41.0          # declarer side (NS)
-    lead_type = str(ws.cell(row=2, column=18).value)        # R2
+    assert ws.cell(row=1, column=8).value == 'Spilfører'    # H1
+    assert ws.cell(row=2, column=8).value == 'N'            # H2
+    assert ws.cell(row=1, column=19).value == 'Lead type'   # S1
+    assert ws.cell(row=1, column=17).value == 'Pct Defense' # Q1
+    assert ws.cell(row=1, column=18).value == 'Pct Decl'    # R1
+    assert ws.cell(row=2, column=17).value == 59.0          # defense side (ØV)
+    assert ws.cell(row=2, column=18).value == 41.0          # declarer side (NS)
+    lead_type = str(ws.cell(row=2, column=19).value)        # S2
     assert 'sequence_lead' in lead_type
 
 
@@ -195,9 +195,9 @@ def test_traveller_mirrors_missing_score_side():
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    # J2/K2 = Score NS / Score ØV
-    assert ws.cell(row=2, column=10).value == 420
-    assert ws.cell(row=2, column=11).value == -420
+    # K2/L2 = Score NS / Score ØV
+    assert ws.cell(row=2, column=11).value == 420
+    assert ws.cell(row=2, column=12).value == -420
 
 
 def test_pooled_lead_effect_section_written_under_board():
@@ -239,26 +239,26 @@ def test_pooled_lead_effect_section_written_under_board():
 
     title_rows = [
         r for r in range(1, 120)
-        if str(ws.cell(row=r, column=4).value or '').startswith('Lead-effekt (pooled')
+        if str(ws.cell(row=r, column=5).value or '').startswith('Lead-effekt (pooled')
     ]
-    assert title_rows, "Expected pooled lead-effect title in column D"
+    assert title_rows, "Expected pooled lead-effect title in column E"
 
     title_row = title_rows[0]
-    assert 'A+B+C' in str(ws.cell(row=title_row, column=4).value)
-    assert ws.cell(row=title_row + 2, column=4).value == 'Spilfører'
-    assert ws.cell(row=title_row + 2, column=5).value == 'Lead type'
-    assert ws.cell(row=title_row + 2, column=6).value == 'Udspiller'
-    assert ws.cell(row=title_row + 2, column=7).value == 'Udspil'
-    assert ws.cell(row=title_row + 2, column=8).value == 'Farve'
-    assert ws.cell(row=title_row + 3, column=4).value == 'N'
-    assert ws.cell(row=title_row + 3, column=6).value == 'Ø'
-    assert ws.cell(row=title_row + 3, column=7).value == '♠K'
-    assert ws.cell(row=title_row + 3, column=8).value == '♥'
+    assert 'A+B+C' in str(ws.cell(row=title_row, column=5).value)
+    assert ws.cell(row=title_row + 2, column=5).value == 'Spilfører'
+    assert ws.cell(row=title_row + 2, column=6).value == 'Lead type'
+    assert ws.cell(row=title_row + 2, column=7).value == 'Udspiller'
+    assert ws.cell(row=title_row + 2, column=8).value == 'Udspil'
+    assert ws.cell(row=title_row + 2, column=9).value == 'Farve'
+    assert ws.cell(row=title_row + 3, column=5).value == 'N'
+    assert ws.cell(row=title_row + 3, column=7).value == 'Ø'
+    assert ws.cell(row=title_row + 3, column=8).value == '♠K'
+    assert ws.cell(row=title_row + 3, column=9).value == '♥'
 
     lead_types = [
-        str(ws.cell(row=r, column=5).value)
+        str(ws.cell(row=r, column=6).value)
         for r in range(title_row + 3, title_row + 12)
-        if ws.cell(row=r, column=5).value is not None
+        if ws.cell(row=r, column=6).value is not None
     ]
     assert any('sequence_lead' in s for s in lead_types)
 
@@ -309,11 +309,11 @@ def test_pooled_lead_effect_sorted_best_to_worst_even_if_count_lower():
 
     title_row = next(
         r for r in range(1, 180)
-        if str(ws.cell(row=r, column=4).value or '').startswith('Lead-effekt (pooled')
+        if str(ws.cell(row=r, column=5).value or '').startswith('Lead-effekt (pooled')
     )
 
     # First data row is title+3 (header at title+2)
-    first_lead_type = str(ws.cell(row=title_row + 3, column=5).value)
+    first_lead_type = str(ws.cell(row=title_row + 3, column=6).value)
     assert 'best_type' in first_lead_type
 
 
@@ -357,10 +357,10 @@ def test_pooled_lead_effect_highlights_target_pair_lead_row():
 
     title_row = next(
         r for r in range(1, 180)
-        if str(ws.cell(row=r, column=4).value or '').startswith('Lead-effekt (pooled')
+        if str(ws.cell(row=r, column=5).value or '').startswith('Lead-effekt (pooled')
     )
     hdr_row = title_row + 2
-    udspil_col = 7  # D=4; headers: Spilfører, Lead type, Udspiller, Udspil
+    udspil_col = 8  # E=5; headers: Spilfører, Lead type, Udspiller, Udspil
 
     highlighted = False
     for r in range(hdr_row + 1, hdr_row + 20):
@@ -405,13 +405,13 @@ def test_pooled_lead_effect_highlight_requires_contract_color_match():
 
     title_row = next(
         r for r in range(1, 180)
-        if str(ws.cell(row=r, column=4).value or '').startswith('Lead-effekt (pooled')
+        if str(ws.cell(row=r, column=5).value or '').startswith('Lead-effekt (pooled')
     )
     hdr_row = title_row + 2
 
-    # D=4; columns: D=Spilfører, E=Lead type, F=Udspiller, G=Udspil, H=Farve
-    udspil_col = 7
-    farve_col = 8
+    # E=5; columns: E=Spilfører, F=Lead type, G=Udspiller, H=Udspil, I=Farve
+    udspil_col = 8
+    farve_col = 9
 
     row_nt = None
     row_spade = None
@@ -456,15 +456,15 @@ def test_pooled_lead_effect_udspiller_bold_when_target_pair_leads():
 
     title_row = next(
         r for r in range(1, 180)
-        if str(ws.cell(row=r, column=4).value or '').startswith('Lead-effekt (pooled')
+        if str(ws.cell(row=r, column=5).value or '').startswith('Lead-effekt (pooled')
     )
     hdr_row = title_row + 2
 
-    # D=4; columns: D=Spilfører, E=Lead type, F=Udspiller
-    udspiller_col = 6
+    # E=5; columns: E=Spilfører, F=Lead type, G=Udspiller
+    udspiller_col = 7
     first_data_row = hdr_row + 1
 
-    assert ws.cell(row=first_data_row, column=4).value == 'Ø'
+    assert ws.cell(row=first_data_row, column=5).value == 'Ø'
     assert ws.cell(row=first_data_row, column=udspiller_col).value == 'S'
     assert ws.cell(row=first_data_row, column=udspiller_col).font.bold is True
 
@@ -763,18 +763,18 @@ def test_par_note_moved_to_o9():
 
 
 # ---------------------------------------------------------------------------
-# Tests for mini traveller table (D1:R2)
+# Tests for mini traveller table (E1:S2)
 # ---------------------------------------------------------------------------
 
-def test_mini_traveller_headers_at_d1():
-    """Mini traveller header row must be written at D1:R1."""
+def test_mini_traveller_headers_at_e1():
+    """Mini traveller header row must be written at E1:S1."""
     df = _make_df()
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    # Column D = 4; headers span D1..R1 (15 columns)
-    headers = [ws.cell(row=1, column=4 + i).value for i in range(15)]
+    # Column E = 5; headers span E1..S1 (15 columns)
+    headers = [ws.cell(row=1, column=5 + i).value for i in range(15)]
     assert headers[0] == 'NS'
     assert headers[1] == 'ØV'
     assert headers[2] == 'Kontrakt'
@@ -799,15 +799,15 @@ def test_mini_traveller_data_row_player_names():
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    ns_cell = ws.cell(row=2, column=4).value   # D2 = NS
-    ov_cell = ws.cell(row=2, column=5).value   # E2 = ØV
-    contract_cell = ws.cell(row=2, column=6).value  # F2 = Kontrakt
-    decl_cell = ws.cell(row=2, column=7).value      # G2 = Spilfører
-    lead_cell = ws.cell(row=2, column=8).value      # H2 = Udspil
-    tricks_cell = ws.cell(row=2, column=9).value    # I2 = Stik
-    pct_ns_cell = ws.cell(row=2, column=14).value   # N2 = Pct NS
-    pct_def_cell = ws.cell(row=2, column=16).value  # P2 = Pct Defense
-    pct_decl_cell = ws.cell(row=2, column=17).value # Q2 = Pct Decl
+    ns_cell = ws.cell(row=2, column=5).value   # E2 = NS
+    ov_cell = ws.cell(row=2, column=6).value   # F2 = ØV
+    contract_cell = ws.cell(row=2, column=7).value  # G2 = Kontrakt
+    decl_cell = ws.cell(row=2, column=8).value      # H2 = Spilfører
+    lead_cell = ws.cell(row=2, column=9).value      # I2 = Udspil
+    tricks_cell = ws.cell(row=2, column=10).value   # J2 = Stik
+    pct_ns_cell = ws.cell(row=2, column=15).value   # O2 = Pct NS
+    pct_def_cell = ws.cell(row=2, column=17).value  # Q2 = Pct Defense
+    pct_decl_cell = ws.cell(row=2, column=18).value # R2 = Pct Decl
 
     assert PER in str(ns_cell)
     assert HENRIK in str(ns_cell)
@@ -823,13 +823,13 @@ def test_mini_traveller_data_row_player_names():
 
 
 def test_mini_traveller_pct_ov_column():
-    """Pct ØV is read from pct_ØV column and placed at O2 (column 15)."""
+    """Pct ØV is read from pct_ØV column and placed at P2 (column 16)."""
     df = _make_df(pct_ØV=41.7)
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    assert ws.cell(row=2, column=15).value == 41.7
+    assert ws.cell(row=2, column=16).value == 41.7
 
 
 def test_mini_traveller_missing_pct_is_none():
@@ -839,14 +839,14 @@ def test_mini_traveller_missing_pct_is_none():
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    assert ws.cell(row=2, column=14).value is None   # Pct NS
-    assert ws.cell(row=2, column=15).value is None   # Pct ØV
-    assert ws.cell(row=2, column=16).value == 'ukendt'   # Pct Defense
-    assert ws.cell(row=2, column=17).value == 'ukendt'   # Pct Decl
+    assert ws.cell(row=2, column=15).value is None   # Pct NS
+    assert ws.cell(row=2, column=16).value is None   # Pct ØV
+    assert ws.cell(row=2, column=17).value == 'ukendt'   # Pct Defense
+    assert ws.cell(row=2, column=18).value == 'ukendt'   # Pct Decl
 
 
 # ---------------------------------------------------------------------------
-# Tests for Double Dummy table (D5:J9)
+# Tests for Double Dummy table (E5:K9)
 # ---------------------------------------------------------------------------
 
 def _make_df_with_dd(**extra):
@@ -863,13 +863,13 @@ def _make_df_with_dd(**extra):
 
 
 def test_dd_table_title_when_valid():
-    """Title cell D5 must read 'Double Dummy' when dd_valid is True."""
+    """Title cell E5 must read 'Double Dummy' when dd_valid is True."""
     df = _make_df_with_dd()
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    assert ws.cell(row=5, column=4).value == 'Double Dummy'
+    assert ws.cell(row=5, column=5).value == 'Double Dummy'
 
 
 def test_dd_table_title_cell_is_gray_header_style():
@@ -881,50 +881,50 @@ def test_dd_table_title_cell_is_gray_header_style():
 
     dd_title_row = next(
         r for r in range(1, 120)
-        if ws.cell(row=r, column=4).value == 'Double Dummy'
+        if ws.cell(row=r, column=5).value == 'Double Dummy'
     )
-    rgb = str(ws.cell(row=dd_title_row, column=4).fill.fgColor.rgb or '')
+    rgb = str(ws.cell(row=dd_title_row, column=5).fill.fgColor.rgb or '')
     assert rgb.endswith('D9D9D9')
 
 
 def test_dd_table_strain_headers():
-    """Strain headers in E5:J5 must be NT, ♠, ♥, ♦, ♣, HP."""
+    """Strain headers in F5:K5 must be NT, ♠, ♥, ♦, ♣, HP."""
     df = _make_df_with_dd()
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    headers = [str(ws.cell(row=5, column=5 + i).value) for i in range(6)]
+    headers = [str(ws.cell(row=5, column=6 + i).value) for i in range(6)]
     assert headers == ['NT', '♠', '♥', '♦', '♣', 'HP']
 
 
 def test_dd_table_row_labels():
-    """Row labels in D6:D9 must be N, S, Ø, V."""
+    """Row labels in E6:E9 must be N, S, Ø, V."""
     df = _make_df_with_dd()
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    labels = [ws.cell(row=6 + i, column=4).value for i in range(4)]
+    labels = [ws.cell(row=6 + i, column=5).value for i in range(4)]
     assert labels == ['N', 'S', 'Ø', 'V']
 
 
 def test_dd_table_values_populated():
-    """DD values must be written correctly in E6:I9."""
+    """DD values must be written correctly in F6:J9."""
     df = _make_df_with_dd()
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
     # Row 6 = N:  NT=9, ♠=10, ♥=8, ♦=7, ♣=6
-    assert ws.cell(row=6, column=5).value == 9    # dd_N_NT
-    assert ws.cell(row=6, column=6).value == 10   # dd_N_S (♠)
-    assert ws.cell(row=6, column=7).value == 8    # dd_N_H (♥)
-    assert ws.cell(row=6, column=8).value == 7    # dd_N_D (♦)
-    assert ws.cell(row=6, column=9).value == 6    # dd_N_C (♣)
+    assert ws.cell(row=6, column=6).value == 9    # dd_N_NT
+    assert ws.cell(row=6, column=7).value == 10   # dd_N_S (♠)
+    assert ws.cell(row=6, column=8).value == 8    # dd_N_H (♥)
+    assert ws.cell(row=6, column=9).value == 7    # dd_N_D (♦)
+    assert ws.cell(row=6, column=10).value == 6   # dd_N_C (♣)
 
     # Row 8 = Ø:  NT=4
-    assert ws.cell(row=8, column=5).value == 4    # dd_Ø_NT
+    assert ws.cell(row=8, column=6).value == 4    # dd_Ø_NT
 
 
 def test_dd_table_highlights_target_pair_rows_yellow():
@@ -936,25 +936,25 @@ def test_dd_table_highlights_target_pair_rows_yellow():
 
     dd_title_row = next(
         r for r in range(1, 120)
-        if ws.cell(row=r, column=4).value == 'Double Dummy'
+        if ws.cell(row=r, column=5).value == 'Double Dummy'
     )
 
     # DD data rows are title+1..title+4 (N,S,Ø,V)
     row_by_dir = {
-        str(ws.cell(row=dd_title_row + i, column=4).value): dd_title_row + i
+        str(ws.cell(row=dd_title_row + i, column=5).value): dd_title_row + i
         for i in range(1, 5)
     }
 
     n_row = row_by_dir['N']
     s_row = row_by_dir['S']
-    n_rgb = str(ws.cell(row=n_row, column=5).fill.fgColor.rgb or '')
-    s_rgb = str(ws.cell(row=s_row, column=5).fill.fgColor.rgb or '')
+    n_rgb = str(ws.cell(row=n_row, column=6).fill.fgColor.rgb or '')
+    s_rgb = str(ws.cell(row=s_row, column=6).fill.fgColor.rgb or '')
     assert n_rgb.endswith('FFF2CC')
     assert s_rgb.endswith('FFF2CC')
 
 
 def test_dd_table_target_pair_row_labels_stay_gray():
-    """DD row-label cells (D-col) should remain gray even when N/S data rows are yellow."""
+    """DD row-label cells (E-col) should remain gray even when N/S data rows are yellow."""
     df = _make_df_with_dd(ns1=HENRIK, ns2=PER)
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
@@ -962,48 +962,48 @@ def test_dd_table_target_pair_row_labels_stay_gray():
 
     dd_title_row = next(
         r for r in range(1, 120)
-        if ws.cell(row=r, column=4).value == 'Double Dummy'
+        if ws.cell(row=r, column=5).value == 'Double Dummy'
     )
 
-    # Row labels in column D should keep header-gray fill for all directions.
+    # Row labels in column E should keep header-gray fill for all directions.
     for i in range(1, 5):
         rr = dd_title_row + i
-        rgb = str(ws.cell(row=rr, column=4).fill.fgColor.rgb or '')
+        rgb = str(ws.cell(row=rr, column=5).fill.fgColor.rgb or '')
         assert rgb.endswith('D9D9D9')
 
 
 def test_dd_table_hcp_column():
-    """HP column (J = column 10) must contain HCP per direction."""
+    """HP column (K = column 11) must contain HCP per direction."""
     df = _make_df_with_dd()
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    assert ws.cell(row=6, column=10).value == 17   # dd_N_HCP
-    assert ws.cell(row=7, column=10).value == 10   # dd_S_HCP
-    assert ws.cell(row=8, column=10).value == 6    # dd_Ø_HCP
-    assert ws.cell(row=9, column=10).value == 7    # dd_V_HCP
+    assert ws.cell(row=6, column=11).value == 17   # dd_N_HCP
+    assert ws.cell(row=7, column=11).value == 10   # dd_S_HCP
+    assert ws.cell(row=8, column=11).value == 6    # dd_Ø_HCP
+    assert ws.cell(row=9, column=11).value == 7    # dd_V_HCP
 
 
 def test_dd_table_not_available_when_dd_valid_false():
-    """When dd_valid is False, D5 shows 'ikke tilgængelig' message."""
+    """When dd_valid is False, E5 shows 'ikke tilgængelig' message."""
     df = _make_df(dd_valid=False)
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    msg = str(ws.cell(row=5, column=4).value)
+    msg = str(ws.cell(row=5, column=5).value)
     assert 'ikke tilgængelig' in msg
 
 
 def test_dd_table_not_available_when_dd_valid_missing():
-    """When dd_valid column is absent, D5 shows 'ikke tilgængelig' message."""
+    """When dd_valid column is absent, E5 shows 'ikke tilgængelig' message."""
     df = _make_df()  # no dd_valid column
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    msg = str(ws.cell(row=5, column=4).value)
+    msg = str(ws.cell(row=5, column=5).value)
     assert 'ikke tilgængelig' in msg
 
 
@@ -1055,9 +1055,9 @@ def test_fallback_uses_earlier_date_traveller():
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    # Traveller data row is at row 2, column 4 (NS-par / D2).
+    # Traveller data row is at row 2, column 5 (NS-par / E2).
     # The early date row has both Per and Henrik as NS.
-    ns_cell = str(ws.cell(row=2, column=4).value)
+    ns_cell = str(ws.cell(row=2, column=5).value)
     assert HENRIK in ns_cell, "Traveller should show earlier date row with Henrik"
 
 

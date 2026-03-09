@@ -419,7 +419,7 @@ def write_board1_layout_sheet(
         'Pct Defense', 'Pct Decl',
         'Lead type',
     ]
-    _TRAV_START_COL = 4  # D
+    _TRAV_START_COL = 5  # E
     _TRAV_HEADER_ROW = 1
     _TRAV_DATA_START_ROW = 2
 
@@ -642,18 +642,18 @@ def write_board1_layout_sheet(
 
     # Column widths for traveller columns (tuned for reliable header readability)
     _TRAV_COL_WIDTHS = [28, 30, 12, 9, 10, 6, 12, 12, 10, 10, 8, 8, 11, 11, 28]
-    _col_letters = 'DEFGHIJKLMNOPQR'
+    _col_letters = 'EFGHIJKLMNOPQRS'
     for letter, width in zip(_col_letters, _TRAV_COL_WIDTHS):
         ws.column_dimensions[letter].width = width
     ws.row_dimensions[_TRAV_HEADER_ROW].height = 20
 
     # Compute DD start row: traveller header + traveller rows + 2 blank rows
     _DD_START_ROW = _TRAV_HEADER_ROW + 1 + len(df_trav) + 2
-    # _DD_START_COL = 4
-    # D    # ------------------------------------------------------------------
-    # 7. Double Dummy table  D6:J10
+    # _DD_START_COL = 5
+    # E    # ------------------------------------------------------------------
+    # 7. Double Dummy table  E6:K10
     # ------------------------------------------------------------------
-    _DD_START_COL = 4  # D
+    _DD_START_COL = 5  # E
 
     dd_valid = per_row.get('dd_valid')
     if dd_valid is None or (isinstance(dd_valid, float) and pd.isna(dd_valid)):
@@ -750,7 +750,7 @@ def write_board1_layout_sheet(
     # ------------------------------------------------------------------
     _dd_end_row = _DD_START_ROW + 4 if dd_valid else _DD_START_ROW
     _LEAD_START_ROW = _dd_end_row + 2
-    _LEAD_START_COL = 4  # D
+    _LEAD_START_COL = 5  # E
 
     df_lead_pool = df.copy()
     if cur_date is not None:
