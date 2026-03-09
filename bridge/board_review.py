@@ -3,7 +3,7 @@ import re
 import pandas as pd
 import numpy as np
 
-from bridge.opening_bid import suggest_opening_for_row
+from bridge.opening_bid import suggest_first_round_for_row
 
 
 # ---------------------------------------------------------------------------
@@ -450,18 +450,32 @@ def write_board1_layout_sheet(
             hdr_fill = _BID_LIGHT_PINK if is_vul else _BID_LIGHT_GREEN
             hdr_cell.fill = PatternFill(fill_type='solid', fgColor=hdr_fill)
 
-    # Dealer opening suggestion from YAML profile logic (MVP: only first call).
-    opening_guess = suggest_opening_for_row(per_row)
-    opening_dealer = opening_guess.get('dealer')
-    opening_display_bid = opening_guess.get('display_bid')
-    opening_log_lines = opening_guess.get('log_lines') if isinstance(opening_guess, dict) else []
+    # First-round suggestion from YAML profile logic (dealer + second hand).
+    round1_guess = suggest_first_round_for_row(per_row)
+    first_guess = round1_guess.get('first_call', {}) if isinstance(round1_guess, dict) else {}
+    second_guess = round1_guess.get('second_call', {}) if isinstance(round1_guess, dict) else {}
+    opening_log_lines = round1_guess.get('log_lines') if isinstance(round1_guess, dict) else []
     bid_col_by_seat = {'S': 1, 'V': 2, 'N': 3, 'Ø': 4}
-    if opening_dealer in bid_col_by_seat and opening_display_bid:
-        ws.cell(
-            row=_BID_DATA_START_ROW,
-            column=bid_col_by_seat[opening_dealer],
-            value=opening_display_bid,
-        )
+
+    first_seat = first_guess.get('dealer') if isinstance(first_guess, dict) else None
+    first_display = first_guess.get('display_bid') if isinstance(first_guess, dict) else None
+    second_seat = second_guess.get('dealer') if isinstance(second_guess, dict) else None
+    second_display = second_guess.get('display_bid') if isinstance(second_guess, dict) else None
+    call_sequence = []
+    if first_seat in bid_col_by_seat and first_display:
+        call_sequence.append((first_seat, first_display))
+    if second_seat in bid_col_by_seat and second_display:
+        call_sequence.append((second_seat, second_display))
+
+    # Place calls in auction order: move right on same row; wrap to next row when needed.
+    cur_row = _BID_DATA_START_ROW
+    prev_col = None
+    for seat, display_bid in call_sequence:
+        col_num = bid_col_by_seat[seat]
+        if prev_col is not None and col_num <= prev_col:
+            cur_row += 1
+        ws.cell(row=cur_row, column=col_num, value=display_bid)
+        prev_col = col_num
 
     # Opening decision log block shown below the bidding table.
     if isinstance(opening_log_lines, list) and opening_log_lines:
@@ -480,7 +494,7 @@ def write_board1_layout_sheet(
             if thin_bid:
                 log_hdr.border = Border(left=thin_bid, right=thin_bid, top=thin_bid, bottom=thin_bid)
 
-        for idx, line in enumerate(opening_log_lines[:10], start=1):
+        for idx, line in enumerate(opening_log_lines[:16], start=1):
             r_log = _BID_LOG_START_ROW + idx
             ws.merge_cells(start_row=r_log, start_column=1, end_row=r_log, end_column=4)
             log_cell = ws.cell(row=r_log, column=1)

@@ -761,6 +761,67 @@ def test_bid_scaffold_opening_log_shows_pas_for_weak_hand():
     assert any('Valg: PAS' in line for line in log_lines)
 
 
+def test_bid_scaffold_second_hand_opens_when_first_hand_passes():
+    """If 1st hand passes, 2nd hand should be evaluated as opening seat."""
+    df = _make_df(
+        dealer='N',
+        N_hand='T9842.83.742.953',      # 1H should pass
+        Ø_hand='AKQ2.QJ3.A32.J54',      # 2H should open 1NT
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=21, column=3).value == 'PAS'   # N
+    assert ws.cell(row=21, column=4).value == '1NT'   # Ø
+
+
+def test_bid_scaffold_second_hand_overcall_is_higher_than_first_hand_bid():
+    """2nd hand overcall must be above 1st hand bid (e.g., 1S -> 2H)."""
+    df = _make_df(
+        dealer='N',
+        N_hand='AKQJ9.8765.3.K2',       # 1H opens 1S
+        Ø_hand='82.AKQJ97.54.842',      # 2H long hearts -> overcall
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=21, column=3).value == '1♠'
+    assert str(ws.cell(row=21, column=4).value) == '2♥'
+
+
+def test_bid_scaffold_second_hand_takeout_double_option():
+    """2nd hand can choose takeout double over opponent's one-level suit opening."""
+    df = _make_df(
+        dealer='N',
+        N_hand='KJ4.Q4.AK974.83',       # 1H opens 1D
+        Ø_hand='AQJ4.KT93.2.AQ84',      # short diamonds + both majors + 12+ HCP
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert str(ws.cell(row=21, column=3).value) == '1♦'
+    assert ws.cell(row=21, column=4).value == 'X'
+
+
+def test_bid_scaffold_second_hand_wraps_to_next_row_after_column_d():
+    """If 1H is in Ø-column (D), 2H must wrap to next row at S-column (A)."""
+    df = _make_df(
+        dealer='Ø',
+        Ø_hand='AKQ2.QJ3.A32.J54',      # 1H opens 1NT in D21
+        S_hand='T9842.83.742.953',      # 2H no action -> PAS, must be A22
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    assert ws.cell(row=21, column=4).value == '1NT'
+    assert ws.cell(row=21, column=1).value is None
+    assert ws.cell(row=22, column=1).value == 'PAS'
+
+
 def test_right_info_block_contract_fields():
     """Info block: Kontrakt at C2, Spilfører at C3, Udspil at C4, Resultat at C5."""
     df = _make_df(contract='4S', decl='N', lead='♥A', tricks=10)
