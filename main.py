@@ -67,6 +67,8 @@ from bridge.mvp_metrics import add_mvp_metrics
 
 HENRIK = "Henrik Friis"
 PER = "Per Føge Jensen"
+REPORT_EVENING_SHEET = "Rapport - Aften"
+REPORT_QUARTER_SHEET = "Rapport - Kvartal"
 
 # Use unique filename to avoid Windows file-lock issues
 OUTPUT_FILE = f"Henrik_Per_ANALYSE_{datetime.now():%Y%m%d_%H%M}.xlsx"
@@ -102,6 +104,25 @@ def _apply_red_suit_symbols(cell) -> None:
             i = j
 
     cell.value = CellRichText(parts)
+
+
+def _format_report_sheet(ws, width: int = 12) -> None:
+    """Set uniform column width and show numeric values with 0 decimals."""
+    if ws is None:
+        return
+
+    for col_idx in range(1, ws.max_column + 1):
+        col_letter = ws.cell(row=1, column=col_idx).column_letter
+        ws.column_dimensions[col_letter].width = width
+
+    for row_idx in range(2, ws.max_row + 1):
+        for col_idx in range(1, ws.max_column + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            val = cell.value
+            if isinstance(val, bool):
+                continue
+            if isinstance(val, (int, float)):
+                cell.number_format = '0'
 
 
 def parse_arguments():
@@ -155,6 +176,50 @@ def parse_arguments():
     )
     
     return parser.parse_args()
+
+
+def _load_all_cached_rows(cache: DataCache) -> list[dict]:
+    """Load all rows from cached tournaments, preserving/setting section labels."""
+    rows: list[dict] = []
+
+    tournaments = cache.manifest.get("tournaments", {})
+    tids: list[int] = []
+    for tid_txt in tournaments.keys():
+        try:
+            tids.append(int(tid_txt))
+        except (TypeError, ValueError):
+            continue
+
+    for tid in sorted(tids):
+        cached_data = cache.get_cached_tournament(tid)
+        if not cached_data:
+            continue
+
+        sections = cached_data.get("sections", {})
+        if not isinstance(sections, dict):
+            continue
+
+        for section_name, section_rows in sections.items():
+            if not isinstance(section_rows, list):
+                continue
+
+            for raw_row in section_rows:
+                if not isinstance(raw_row, dict):
+                    continue
+
+                row = dict(raw_row)
+
+                # Keep explicit section if already present, else use map key.
+                if not row.get("section"):
+                    row["section"] = section_name
+
+                # Normalize date field name for downstream grouping.
+                if not row.get("tournament_date") and row.get("date"):
+                    row["tournament_date"] = row.get("date")
+
+                rows.append(row)
+
+    return rows
 
 
 def main():
@@ -443,33 +508,63 @@ def main():
     
     # ✅ KLASSISKE RAPPORTER
     print("\nGenererer klassiske rapporter...")
-    
+
+    # Build classic reports from all cached tournaments (A-row), not just current date range.
+    cached_rows_all = _load_all_cached_rows(cache)
+    if cached_rows_all:
+        df_classic_source = pd.DataFrame(cached_rows_all)
+        if "section" in df_classic_source.columns:
+            df_classic_source = df_classic_source[df_classic_source["section"] == "A"].copy()
+        if "tournament_date" not in df_classic_source.columns and "date" in df_classic_source.columns:
+            df_classic_source["tournament_date"] = df_classic_source["date"]
+
+        unique_dates = (
+            df_classic_source["tournament_date"].nunique()
+            if "tournament_date" in df_classic_source.columns
+            else 0
+        )
+        print(
+            f"  ℹ Klassiske rapporter bruger cache-historik: "
+            f"{len(df_classic_source)} A-række rækker på {unique_dates} spilledatoer"
+        )
+    else:
+        df_classic_source = df_a_only.copy()
+        print("  ⚠ Ingen cache-historik fundet; bruger kun valgte periode.")
+
     # Filter til kun boards hvor de spiller sammen
-    df_pair_all = df_a_only[
-        df_a_only.apply(
+    df_pair_all = df_classic_source[
+        df_classic_source.apply(
             lambda r: (HENRIK in [r["ns1"], r["ns2"], r["ew1"], r["ew2"]]) and
                       (PER in [r["ns1"], r["ns2"], r["ew1"], r["ew2"]]),
             axis=1
         )
     ].copy()
     
+    if len(df_classic_source) > 0:
+        df_classic_all_roles = add_roles_and_pct(df_classic_source, henrik=HENRIK, per=PER)
+        df_evening_matrix = make_evening_role_matrix(df_classic_all_roles)
+        df_quarterly = make_quarterly_summary_with_ci(df_classic_all_roles)
+    else:
+        df_classic_all_roles = pd.DataFrame()
+        df_evening_matrix = pd.DataFrame()
+        df_quarterly = pd.DataFrame()
+
     if len(df_pair_all) > 0:
         df_pair_all = add_roles_and_pct(df_pair_all, henrik=HENRIK, per=PER)
-        
+
         df_declarer = make_declarer_list(df_pair_all)
         df_summary = make_role_summary(df_pair_all)
         df_tournament = make_tournament_summary(df_pair_all)
-        df_evening_matrix = make_evening_role_matrix(df_pair_all)
-        df_quarterly = make_quarterly_summary_with_ci(df_pair_all)
-        
+
         print(f"  ✓ Klassiske rapporter genereret")
     else:
         df_declarer = pd.DataFrame()
         df_summary = pd.DataFrame()
         df_tournament = pd.DataFrame()
-        df_evening_matrix = pd.DataFrame()
-        df_quarterly = pd.DataFrame()
-        print("  (Ingen data til klassiske rapporter)")
+        if df_evening_matrix.empty and df_quarterly.empty:
+            print("  (Ingen data til klassiske rapporter)")
+        else:
+            print("  ✓ Evening/Quarterly rapporter genereret fra historik")
     
     # ✅ FIELD REPORTS
     print("\nGenererer Field Reports...")
@@ -547,9 +642,11 @@ def main():
         if not df_tournament.empty:
             df_tournament.to_excel(writer, sheet_name='Tournament_Summary', index=False)
         if not df_evening_matrix.empty:
-            df_evening_matrix.to_excel(writer, sheet_name='Evening_Matrix', index=False)
+            df_evening_matrix.to_excel(writer, sheet_name=REPORT_EVENING_SHEET, index=False)
+            _format_report_sheet(writer.sheets.get(REPORT_EVENING_SHEET), width=12)
         if not df_quarterly.empty:
-            df_quarterly.to_excel(writer, sheet_name='Quarterly_Summary', index=False)
+            df_quarterly.to_excel(writer, sheet_name=REPORT_QUARTER_SHEET, index=False)
+            _format_report_sheet(writer.sheets.get(REPORT_QUARTER_SHEET), width=12)
         
         # Field Reports
         if not df_field_defense.empty:
