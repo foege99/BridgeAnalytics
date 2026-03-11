@@ -11,6 +11,12 @@ except ImportError:
     Font = None
 
 try:
+    from openpyxl.chart import LineChart, Reference
+except ImportError:
+    LineChart = None
+    Reference = None
+
+try:
     from openpyxl.cell.rich_text import CellRichText, TextBlock
     from openpyxl.cell.text import InlineFont
     _RED_INLINE_FONT = InlineFont(color='FF0000')
@@ -69,6 +75,7 @@ HENRIK = "Henrik Friis"
 PER = "Per Føge Jensen"
 REPORT_EVENING_SHEET = "Rapport - Aften"
 REPORT_QUARTER_SHEET = "Rapport - Kvartal"
+PARTNER_COLUMNS_TO_REMOVE = ["Henrik_Defence_Partner", "Per_Defence_Partner"]
 
 # Use unique filename to avoid Windows file-lock issues
 OUTPUT_FILE = f"Henrik_Per_ANALYSE_{datetime.now():%Y%m%d_%H%M}.xlsx"
@@ -123,6 +130,155 @@ def _format_report_sheet(ws, width: int = 12) -> None:
                 continue
             if isinstance(val, (int, float)):
                 cell.number_format = '0'
+
+
+def _add_evening_trend_chart(ws, anchor: str) -> None:
+    """Add one line chart with all numeric evening variables over dates."""
+    if ws is None or LineChart is None or Reference is None:
+        return
+    if ws.max_row < 2 or ws.max_column < 2:
+        return
+
+    chart = LineChart()
+    chart.title = "Udvikling pr. dato"
+    chart.y_axis.title = "Pct"
+    chart.x_axis.title = "Dato"
+    chart.style = 2
+
+    cats = Reference(ws, min_col=1, min_row=2, max_row=ws.max_row)
+
+    for col_idx in range(2, ws.max_column + 1):
+        if ws.cell(row=1, column=col_idx).value is None:
+            continue
+
+        has_number = False
+        for row_idx in range(2, ws.max_row + 1):
+            v = ws.cell(row=row_idx, column=col_idx).value
+            if isinstance(v, bool):
+                continue
+            if isinstance(v, (int, float)):
+                has_number = True
+                break
+
+        if not has_number:
+            continue
+
+        data = Reference(ws, min_col=col_idx, min_row=1, max_row=ws.max_row)
+        chart.add_data(data, titles_from_data=True)
+
+    if not chart.series:
+        return
+
+    chart.set_categories(cats)
+    chart.height = 8
+    chart.width = 18
+    ws.add_chart(chart, anchor)
+
+
+def _add_quarter_metric_charts(ws, metrics: list[str]) -> None:
+    """Add quarterly trend charts (one per metric) by Player+Role series."""
+    if ws is None or LineChart is None or Reference is None:
+        return
+    if ws.max_row < 2:
+        return
+
+    header_map = {
+        ws.cell(row=1, column=col_idx).value: col_idx
+        for col_idx in range(1, ws.max_column + 1)
+    }
+
+    quarter_col = header_map.get("quarter")
+    player_col = header_map.get("Player")
+    role_col = header_map.get("Role")
+    if not quarter_col or not player_col or not role_col:
+        return
+
+    visible_last_row = ws.max_row
+    helper_start_col = ws.max_column + 1
+    chart_anchor_row = visible_last_row + 3
+    chart_idx = 0
+
+    for metric in metrics:
+        metric_col = header_map.get(metric)
+        if not metric_col:
+            continue
+
+        quarters: list[str] = []
+        quarter_seen: set[str] = set()
+        labels: list[str] = []
+        label_seen: set[str] = set()
+        values: dict[tuple[str, str], object] = {}
+
+        for row_idx in range(2, visible_last_row + 1):
+            q_val = ws.cell(row=row_idx, column=quarter_col).value
+            p_val = ws.cell(row=row_idx, column=player_col).value
+            r_val = ws.cell(row=row_idx, column=role_col).value
+            m_val = ws.cell(row=row_idx, column=metric_col).value
+
+            if q_val in (None, "") or p_val in (None, "") or r_val in (None, ""):
+                continue
+
+            role_txt = str(r_val)
+            if role_txt == "Defense_Partner":
+                continue
+
+            q_txt = str(q_val)
+            label = f"{p_val}_{role_txt}"
+
+            if q_txt not in quarter_seen:
+                quarter_seen.add(q_txt)
+                quarters.append(q_txt)
+            if label not in label_seen:
+                label_seen.add(label)
+                labels.append(label)
+
+            values[(q_txt, label)] = m_val
+
+        if not quarters or not labels:
+            continue
+
+        table_start_col = helper_start_col
+        ws.cell(row=1, column=table_start_col, value="quarter")
+
+        for q_idx, q_txt in enumerate(quarters, start=2):
+            ws.cell(row=q_idx, column=table_start_col, value=q_txt)
+
+        for s_idx, label in enumerate(labels, start=1):
+            cur_col = table_start_col + s_idx
+            ws.cell(row=1, column=cur_col, value=label)
+
+            for q_idx, q_txt in enumerate(quarters, start=2):
+                cell = ws.cell(row=q_idx, column=cur_col, value=values.get((q_txt, label)))
+                v = cell.value
+                if isinstance(v, bool):
+                    continue
+                if isinstance(v, (int, float)):
+                    cell.number_format = '0'
+
+        chart = LineChart()
+        chart.title = f"{metric} pr. kvartal"
+        chart.y_axis.title = metric
+        chart.x_axis.title = "Kvartal"
+        chart.style = 2
+
+        cats = Reference(ws, min_col=table_start_col, min_row=2, max_row=1 + len(quarters))
+        for s_idx in range(1, len(labels) + 1):
+            data_col = table_start_col + s_idx
+            data = Reference(ws, min_col=data_col, min_row=1, max_row=1 + len(quarters))
+            chart.add_data(data, titles_from_data=True)
+
+        chart.set_categories(cats)
+        chart.height = 7
+        chart.width = 18
+        ws.add_chart(chart, f"A{chart_anchor_row + chart_idx * 15}")
+
+        for col_idx in range(table_start_col, table_start_col + len(labels) + 3):
+            col_letter = ws.cell(row=1, column=col_idx).column_letter
+            ws.column_dimensions[col_letter].width = 12
+            ws.column_dimensions[col_letter].hidden = True
+
+        helper_start_col += len(labels) + 3
+        chart_idx += 1
 
 
 def parse_arguments():
@@ -640,13 +796,29 @@ def main():
         if not df_summary.empty:
             df_summary.to_excel(writer, sheet_name='Role_Summary', index=False)
         if not df_tournament.empty:
-            df_tournament.to_excel(writer, sheet_name='Tournament_Summary', index=False)
+            df_tournament_export = df_tournament.drop(columns=PARTNER_COLUMNS_TO_REMOVE, errors='ignore')
+            df_tournament_export.to_excel(writer, sheet_name='Tournament_Summary', index=False)
         if not df_evening_matrix.empty:
-            df_evening_matrix.to_excel(writer, sheet_name=REPORT_EVENING_SHEET, index=False)
-            _format_report_sheet(writer.sheets.get(REPORT_EVENING_SHEET), width=12)
+            df_evening_export = df_evening_matrix.drop(columns=PARTNER_COLUMNS_TO_REMOVE, errors='ignore')
+            df_evening_export.to_excel(writer, sheet_name=REPORT_EVENING_SHEET, index=False)
+            ws_evening = writer.sheets.get(REPORT_EVENING_SHEET)
+            _format_report_sheet(ws_evening, width=12)
+            if ws_evening is not None:
+                _add_evening_trend_chart(ws_evening, anchor=f"A{ws_evening.max_row + 3}")
         if not df_quarterly.empty:
-            df_quarterly.to_excel(writer, sheet_name=REPORT_QUARTER_SHEET, index=False)
-            _format_report_sheet(writer.sheets.get(REPORT_QUARTER_SHEET), width=12)
+            df_quarterly_export = df_quarterly.copy()
+            if 'Role' in df_quarterly_export.columns:
+                df_quarterly_export = df_quarterly_export[
+                    df_quarterly_export['Role'] != 'Defense_Partner'
+                ].copy()
+            df_quarterly_export = df_quarterly_export.drop(columns=PARTNER_COLUMNS_TO_REMOVE, errors='ignore')
+            df_quarterly_export.to_excel(writer, sheet_name=REPORT_QUARTER_SHEET, index=False)
+            ws_quarter = writer.sheets.get(REPORT_QUARTER_SHEET)
+            _format_report_sheet(ws_quarter, width=12)
+            _add_quarter_metric_charts(
+                ws_quarter,
+                metrics=['Mean_pct', 'Count', 'Std', 'CI95_low', 'CI95_high']
+            )
         
         # Field Reports
         if not df_field_defense.empty:
