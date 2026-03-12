@@ -179,6 +179,7 @@ def test_traveller_has_lead_type_last_column():
         lead_rank_class='top_of_sequence',
         pct_NS=41.0,
         pct_ØV=59.0,
+        point_ØV=3,
     )
     writer, wb = _make_writer_mock()
 
@@ -188,10 +189,10 @@ def test_traveller_has_lead_type_last_column():
     assert ws.cell(row=1, column=8).value == 'Spilfører'    # H1
     assert ws.cell(row=2, column=8).value == 'N'            # H2
     assert ws.cell(row=1, column=19).value == 'Lead type'   # S1
-    assert ws.cell(row=1, column=17).value == 'Pct Defense' # Q1
-    assert ws.cell(row=1, column=18).value == 'Pct Decl'    # R1
-    assert ws.cell(row=2, column=17).value == 59.0          # defense side (ØV)
-    assert ws.cell(row=2, column=18).value == 41.0          # declarer side (NS)
+    assert ws.cell(row=1, column=17).value == 'Pct NS (frekv)' # Q1
+    assert ws.cell(row=1, column=18).value == 'Pt ØV (frekv)'  # R1
+    assert ws.cell(row=2, column=17).value == 41.0             # pct NS (fallback)
+    assert ws.cell(row=2, column=18).value == 3                # point ØV (fallback)
     lead_type = str(ws.cell(row=2, column=19).value)        # S2
     assert 'sequence_lead' in lead_type
 
@@ -819,6 +820,49 @@ def test_bid_scaffold_second_hand_takeout_double_option():
     assert ws.cell(row=21, column=4).value == 'X'
 
 
+def test_takeout_double_partner_response_jump_new_suit_after_pass():
+    """After 1D-X-pass, advancer should jump with constructive values and 4+ major."""
+    row = {
+        'dealer': 'Ø',
+        'vul': 'Ingen i zonen',
+        'Ø_hand': 'A84.Q73.AQJ74.85',
+        'S_hand': 'KQ97.AKJ6.K.9743',
+        'V_hand': 'J62.T542.T863.K2',
+        'N_hand': 'T53.K987.92.AJ84',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    s_first = _find_call(seq, 'S', 1)
+    n_first = _find_call(seq, 'N', 1)
+
+    assert s_first is not None
+    assert str(s_first.get('display_bid')) == 'X'
+    assert 'takeout_double' in str(s_first.get('rule_id') or '')
+
+    assert n_first is not None
+    assert str(n_first.get('display_bid')) == '2♥'
+    assert str(n_first.get('rule_id')) == 'takeout_double_response_jump_new_suit'
+
+
+def test_takeout_double_partner_response_new_suit_with_weak_values():
+    """After 1D-X-pass, weak advancer should bid cheapest suitable major at lowest level."""
+    row = {
+        'dealer': 'Ø',
+        'vul': 'Ingen i zonen',
+        'Ø_hand': 'A84.Q73.AQJ74.85',
+        'S_hand': 'KQ97.AKJ6.K.9743',
+        'V_hand': 'J62.T542.T863.K2',
+        'N_hand': 'T53.Q9872.92.J84',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    n_first = _find_call(seq, 'N', 1)
+
+    assert n_first is not None
+    assert str(n_first.get('display_bid')) == '1♥'
+    assert str(n_first.get('rule_id')) == 'takeout_double_response_new_suit'
+
+
 def test_double_context_takeout_when_partner_only_passed_or_unbid():
     calls = [
         {'dealer': 'N', 'bid': '1D'},
@@ -1094,6 +1138,67 @@ def test_responder_one_nt_over_minor_limited_and_opener_weak_passes():
     assert str(s_first.get('rule_id')) == 'responder_one_nt_over_minor_limited'
     assert str(n_second.get('display_bid')) == 'PAS'
     assert str(n_second.get('rule_id')) == 'opener_rebid_after_1m_1nt_weak_pass'
+
+
+def test_responder_one_spade_uses_two_over_one_new_suit_then_opener_rebids_major():
+    """After 1S-P, responder with 10+ and a 4+ lower suit should bid 2-over-1, and opener should rebid major."""
+    row = {
+        'dealer': 'Ø',
+        'vul': 'Ingen i zonen',
+        'Ø_hand': 'AKT975.4.QJ63.82',
+        'V_hand': 'Q42.73.AQJ9.K764',
+        'N_hand': 'J83.KJT9.84.AQ53',
+        'S_hand': '654.8762.952.JT3',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    v_first = _find_call(seq, 'V', 1)
+    o_second = _find_call(seq, 'Ø', 2)
+    assert v_first is not None
+    assert o_second is not None
+    assert str(v_first.get('display_bid')) == '2♦'
+    assert str(v_first.get('rule_id')) == 'responder_two_over_one_new_suit'
+    assert str(o_second.get('display_bid')) == '2♠'
+    assert str(o_second.get('rule_id')) == 'opener_rebid_after_1M_2new_rebid_major'
+
+
+def test_two_over_one_gf_profile_routes_subminimum_to_one_nt_over_one_spade():
+    """With 2-over-1 GF active, 12 HCP responder over 1S should bid 1NT (not 2-level new suit)."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'AKT987.4.QJ63.82',
+        'S_hand': 'Q2.A73.KQJ9.T764',
+        'Ø_hand': '654.8762.952.JT3',
+        'V_hand': 'J83.KJT9.84.AQ53',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    s_first = _find_call(seq, 'S', 1)
+    assert s_first is not None
+    assert str(s_first.get('display_bid')) == '1NT'
+    assert str(s_first.get('rule_id')) == 'responder_one_nt_over_major_limited'
+
+
+def test_responder_places_game_after_one_spade_two_over_one_and_major_rebid():
+    """After 1S-2D-2S, responder with fit and game values should place contract in 4S."""
+    row = {
+        'dealer': 'Ø',
+        'vul': 'Ingen i zonen',
+        'Ø_hand': 'AKQ975.4.J632.82',
+        'V_hand': 'Q42.3.KQJ9.A764',
+        'N_hand': 'J83.KJT9.84.Q53',
+        'S_hand': '654.8762.952.JT3',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    v_second = _find_call(seq, 'V', 2)
+    assert v_second is not None
+    assert str(v_second.get('display_bid')) == '4♠'
+    assert str(v_second.get('rule_id')) == 'responder_after_1M_2new_2M_game_place'
 
 
 def test_one_diamond_one_spade_forces_opener_rebid():
@@ -1512,14 +1617,14 @@ def test_mini_traveller_headers_at_e1():
     assert headers[9] == 'Point ØV'
     assert headers[10] == 'Pct NS'
     assert headers[11] == 'Pct ØV'
-    assert headers[12] == 'Pct Defense'
-    assert headers[13] == 'Pct Decl'
+    assert headers[12] == 'Pct NS (frekv)'
+    assert headers[13] == 'Pt ØV (frekv)'
     assert headers[14] == 'Lead type'
 
 
 def test_mini_traveller_data_row_player_names():
     """Mini traveller data row (row 2) shows combined NS and ØV names."""
-    df = _make_df(contract='4S', lead='♥A', tricks=10, pct_NS=58.3, pct_ØV=41.7, decl='N')
+    df = _make_df(contract='4S', lead='♥A', tricks=10, pct_NS=58.3, pct_ØV=41.7, point_ØV=4, decl='N')
     writer, wb = _make_writer_mock()
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
@@ -1531,8 +1636,8 @@ def test_mini_traveller_data_row_player_names():
     lead_cell = ws.cell(row=2, column=9).value      # I2 = Udspil
     tricks_cell = ws.cell(row=2, column=10).value   # J2 = Stik
     pct_ns_cell = ws.cell(row=2, column=15).value   # O2 = Pct NS
-    pct_def_cell = ws.cell(row=2, column=17).value  # Q2 = Pct Defense
-    pct_decl_cell = ws.cell(row=2, column=18).value # R2 = Pct Decl
+    pct_ns_freq_cell = ws.cell(row=2, column=17).value  # Q2 = Pct NS (frekv)
+    pt_ov_freq_cell = ws.cell(row=2, column=18).value   # R2 = Pt ØV (frekv)
 
     assert PER in str(ns_cell)
     assert HENRIK in str(ns_cell)
@@ -1543,8 +1648,8 @@ def test_mini_traveller_data_row_player_names():
     assert str(lead_cell) == '♥A'
     assert tricks_cell == 10
     assert pct_ns_cell == 58.3
-    assert pct_def_cell == 41.7
-    assert pct_decl_cell == 58.3
+    assert pct_ns_freq_cell == 58.3
+    assert pt_ov_freq_cell == 4
 
 
 def test_mini_traveller_pct_ov_column():
@@ -1566,8 +1671,8 @@ def test_mini_traveller_missing_pct_is_none():
 
     assert ws.cell(row=2, column=15).value is None   # Pct NS
     assert ws.cell(row=2, column=16).value is None   # Pct ØV
-    assert ws.cell(row=2, column=17).value == 'ukendt'   # Pct Defense
-    assert ws.cell(row=2, column=18).value == 'ukendt'   # Pct Decl
+    assert ws.cell(row=2, column=17).value == 'ukendt'   # Pct NS (frekv)
+    assert ws.cell(row=2, column=18).value == 'ukendt'   # Pt ØV (frekv)
 
 
 # ---------------------------------------------------------------------------

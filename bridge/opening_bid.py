@@ -558,6 +558,12 @@ def _takeout_double_min_hcp_for_seat(seat: str) -> int:
         return 12
 
 
+def _responses_to_takeout_double_for_seat(seat: str) -> dict[str, Any]:
+    comp = _competitive_bidding_for_seat(seat)
+    out = (comp.get("responses_to_takeout_double", {}) or {}) if isinstance(comp, Mapping) else {}
+    return out if isinstance(out, Mapping) else {}
+
+
 def _negative_double_params_for_seat(seat: str) -> dict[str, Any]:
     comp = _competitive_bidding_for_seat(seat)
     neg = (comp.get("negative_double_system", {}) or {}) if isinstance(comp, Mapping) else {}
@@ -857,6 +863,70 @@ def _one_diamond_one_spade_forcing_rule_for_seat(seat: str) -> tuple[int, str, b
     return hcp_min, forcing, limited
 
 
+def _one_major_two_level_new_suit_rule_for_seat(seat: str) -> tuple[int, str, bool]:
+    rules = _sequence_rules_for_seat(seat)
+    spec_raw = (rules.get("one_major_two_level_new_suit", {}) or {}) if isinstance(rules, Mapping) else {}
+    spec = spec_raw if isinstance(spec_raw, Mapping) else {}
+
+    hcp_min = _int_or_default(spec.get("default_hcp_min", spec.get("hcp_min", 10)), 10)
+    forcing = str(spec.get("forcing") or "one_round")
+    opener_may_pass = _bool_or_default(spec.get("opener_may_pass"), False)
+
+    if _is_two_over_one_gf_enabled_for_seat(seat):
+        alt_raw = spec.get("if_two_over_one_game_force", {}) or {}
+        alt = alt_raw if isinstance(alt_raw, Mapping) else {}
+        if "hcp_min" in alt:
+            hcp_min = _int_or_default(alt.get("hcp_min"), hcp_min)
+        elif "default_hcp_min" in alt:
+            hcp_min = _int_or_default(alt.get("default_hcp_min"), hcp_min)
+        if alt.get("forcing"):
+            forcing = str(alt.get("forcing"))
+        if "opener_may_pass" in alt:
+            opener_may_pass = _bool_or_default(alt.get("opener_may_pass"), opener_may_pass)
+
+    return max(0, int(hcp_min)), forcing, opener_may_pass
+
+
+def _one_major_two_level_new_suit_then_major_rebid_params_for_seat(seat: str) -> tuple[int, int, int]:
+    rules = _sequence_rules_for_seat(seat)
+    spec_raw = (rules.get("one_major_two_level_new_suit_then_major_rebid", {}) or {}) if isinstance(rules, Mapping) else {}
+    spec = spec_raw if isinstance(spec_raw, Mapping) else {}
+
+    support_min = max(1, _int_or_default(spec.get("support_min", 3), 3))
+    game_hcp_min = max(0, _int_or_default(spec.get("game_hcp_min", 12), 12))
+    game_playing_points_min = max(0, _int_or_default(spec.get("game_playing_points_min", 14), 14))
+
+    if _is_two_over_one_gf_enabled_for_seat(seat):
+        alt_raw = spec.get("if_two_over_one_game_force", {}) or {}
+        alt = alt_raw if isinstance(alt_raw, Mapping) else {}
+        support_min = max(1, _int_or_default(alt.get("support_min", support_min), support_min))
+        game_hcp_min = max(0, _int_or_default(alt.get("game_hcp_min", game_hcp_min), game_hcp_min))
+        game_playing_points_min = max(
+            0,
+            _int_or_default(alt.get("game_playing_points_min", game_playing_points_min), game_playing_points_min),
+        )
+
+    return support_min, game_hcp_min, game_playing_points_min
+
+
+def _is_two_over_one_new_suit(
+    opening_strain: str | None,
+    response_strain: str | None,
+    response_level: int | None = None,
+) -> bool:
+    if opening_strain not in ("H", "S"):
+        return False
+    if response_strain not in ("S", "H", "D", "C"):
+        return False
+    if response_strain == opening_strain:
+        return False
+    if _strain_order(response_strain) >= _strain_order(opening_strain):
+        return False
+    if response_level is not None and int(response_level) != 2:
+        return False
+    return True
+
+
 def _latest_side_contract_in_state(state: Any, seat: str) -> tuple[str, int, str] | None:
     for prev in reversed(list(state.calls or [])):
         prev_seat = _normalize_seat(getattr(prev, "seat", None))
@@ -1120,6 +1190,17 @@ def _lowest_higher_bid_for_strain(first_bid: str | None, strain: str) -> str | N
     return f"{out_lvl}{strain}"
 
 
+def _jump_bid_for_strain(first_bid: str | None, strain: str) -> str | None:
+    base = _lowest_higher_bid_for_strain(first_bid, strain)
+    parsed = _parse_contract_bid(base)
+    if parsed is None:
+        return None
+    lvl, parsed_strain = parsed
+    if lvl >= 7:
+        return None
+    return f"{lvl + 1}{parsed_strain}"
+
+
 def _highest_contract_bid_text(*bids: str | None) -> str | None:
     best: tuple[int, str] | None = None
     for b in bids:
@@ -1355,6 +1436,297 @@ def _suggest_second_hand_competitive(
     }
 
 
+def _suggest_response_after_partner_takeout_double(
+    row: Mapping[str, Any],
+    seat: str,
+    highest_contract: str,
+    hand_tag: str = "4H",
+    prior_calls: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    hand_col = f"{seat}_hand"
+    hand_dot = row.get(hand_col)
+    if hand_dot is None or str(hand_dot).strip() in ("", "None"):
+        return {
+            "dealer": seat,
+            "profile": None,
+            "bid": "PASS",
+            "display_bid": "PAS",
+            "rule_id": "takeout_double_response_missing",
+            "explanation": f"Svarhånd ({seat}) mangler hånddata; vælger PAS.",
+            "log_lines": [
+                f"{hand_tag} kontekst: svar efter makkers oplysningsdobling.",
+                f"{hand_tag} valg: PAS",
+                f"{hand_tag} regel-id: takeout_double_response_missing",
+            ],
+        }
+
+    ctx = _build_context(str(hand_dot))
+    suit_lens = {
+        "S": int(ctx["spades"]),
+        "H": int(ctx["hearts"]),
+        "D": int(ctx["diamonds"]),
+        "C": int(ctx["clubs"]),
+    }
+
+    calls = list(prior_calls or [])
+    partner = _partner_of(seat)
+    side = _seat_side(seat)
+    opp_side = "ØV" if side == "NS" else "NS"
+
+    partner_double_idx = None
+    for idx in range(len(calls) - 1, -1, -1):
+        c = calls[idx]
+        c_seat = _normalize_seat(c.get("dealer"))
+        if c_seat != partner:
+            continue
+        bid_txt = str(c.get("bid") or "PASS").upper()
+        rid = str(c.get("rule_id") or "")
+        if bid_txt in ("X", "DBL", "DOUBLE") and "takeout_double" in rid:
+            partner_double_idx = idx
+        break
+
+    if partner_double_idx is None:
+        return {
+            "dealer": seat,
+            "profile": None,
+            "bid": "PASS",
+            "display_bid": "PAS",
+            "rule_id": "takeout_double_response_unusable",
+            "explanation": "Ingen aktiv oplysningsdobling fra makker at svare på; vælger PAS.",
+            "log_lines": [
+                f"{hand_tag} kontekst: makkers seneste melding er ikke en oplysningsdobling.",
+                f"{hand_tag} valg: PAS",
+                f"{hand_tag} regel-id: takeout_double_response_unusable",
+            ],
+        }
+
+    latest_opp_contract = _latest_contract_call_by_side(calls[:partner_double_idx], opp_side)
+    doubled_bid = str((latest_opp_contract or {}).get("bid") or highest_contract or "PASS").upper()
+    parsed_doubled = _parse_contract_bid(doubled_bid)
+    if parsed_doubled is None:
+        return {
+            "dealer": seat,
+            "profile": None,
+            "bid": "PASS",
+            "display_bid": "PAS",
+            "rule_id": "takeout_double_response_unusable",
+            "explanation": "Kan ikke identificere den kontrakt makker har doblet; vælger PAS.",
+            "log_lines": [
+                f"{hand_tag} kontekst: kunne ikke udlede åbners kontrakt før dobling.",
+                f"{hand_tag} valg: PAS",
+                f"{hand_tag} regel-id: takeout_double_response_unusable",
+            ],
+        }
+    _, opp_strain = parsed_doubled
+
+    interference = False
+    for c in calls[partner_double_idx + 1:]:
+        c_seat = _normalize_seat(c.get("dealer"))
+        if c_seat is None or _seat_side(c_seat) != opp_side:
+            continue
+        if _parse_contract_bid(str(c.get("bid") or "PASS").upper()) is not None:
+            interference = True
+            break
+
+    resp_cfg = _responses_to_takeout_double_for_seat(seat)
+
+    new_suit_cfg = (resp_cfg.get("new_suit_response", {}) or {}) if isinstance(resp_cfg, Mapping) else {}
+    if not isinstance(new_suit_cfg, Mapping):
+        new_suit_cfg = {}
+    new_strength = (new_suit_cfg.get("strength", {}) or {}) if isinstance(new_suit_cfg, Mapping) else {}
+    if not isinstance(new_strength, Mapping):
+        new_strength = {}
+
+    preferred_len = max(
+        3,
+        _int_or_default(
+            ((new_suit_cfg.get("preferred_length", {}) or {}).get("cards") if isinstance(new_suit_cfg, Mapping) else 4),
+            4,
+        ),
+    )
+    minimum_len = max(
+        3,
+        _int_or_default(
+            ((new_suit_cfg.get("minimum_possible", {}) or {}).get("cards") if isinstance(new_suit_cfg, Mapping) else 3),
+            3,
+        ),
+    )
+    simple_low, simple_high = _hcp_bounds_from_spec(new_strength, 0, 7)
+
+    jump_cfg = (resp_cfg.get("jump_new_suit", {}) or {}) if isinstance(resp_cfg, Mapping) else {}
+    if not isinstance(jump_cfg, Mapping):
+        jump_cfg = {}
+    jump_low, jump_high = _hcp_bounds_from_spec(jump_cfg, 8, 11)
+    jump_len_min = max(3, _int_or_default(jump_cfg.get("suit_length_min", 4), 4))
+
+    cuebid_cfg = (resp_cfg.get("cuebid_of_opponents_suit", {}) or {}) if isinstance(resp_cfg, Mapping) else {}
+    if not isinstance(cuebid_cfg, Mapping):
+        cuebid_cfg = {}
+    cuebid_hcp_min = max(0, _int_or_default(cuebid_cfg.get("hcp_min", 12), 12))
+
+    nt_cfg = (resp_cfg.get("notrump_responses_default", {}) or {}) if isinstance(resp_cfg, Mapping) else {}
+    if not isinstance(nt_cfg, Mapping):
+        nt_cfg = {}
+    nt_ranges = {
+        "1NT": _hcp_bounds_from_spec(nt_cfg.get("1NT") if isinstance(nt_cfg, Mapping) else None, 6, 9),
+        "2NT": _hcp_bounds_from_spec(nt_cfg.get("2NT") if isinstance(nt_cfg, Mapping) else None, 10, 12),
+        "3NT": _hcp_bounds_from_spec(nt_cfg.get("3NT") if isinstance(nt_cfg, Mapping) else None, 13, 15),
+    }
+
+    if interference:
+        # Standard practical adjustment when opponents bid after the takeout double.
+        simple_low, simple_high = 5, 10
+        jump_low, jump_high = 11, 12
+
+    sys_def = _system_def_for_seat(seat)
+    shape_defs = (sys_def.get("shape_definitions", {}) or {}) if isinstance(sys_def, Mapping) else {}
+    if not isinstance(shape_defs, Mapping):
+        shape_defs = {}
+    balanced_shapes = shape_defs.get("balanced_shapes")
+    if not isinstance(balanced_shapes, list):
+        balanced_shapes = [[4, 3, 3, 3], [4, 4, 3, 2], [5, 3, 3, 2]]
+
+    is_balanced = _shape_matches(tuple(ctx.get("shape_shdc", (0, 0, 0, 0))), list(balanced_shapes))
+    stopper_in_opp = _has_stopper_in_suit(str(hand_dot), str(opp_strain))
+
+    def _response_order() -> list[str]:
+        majors = [s for s in ("H", "S") if s != opp_strain]
+        minors = [s for s in ("C", "D") if s != opp_strain]
+
+        def _sort_key(s: str) -> tuple[int, int, int]:
+            cand = _lowest_higher_bid_for_strain(highest_contract, s)
+            parsed = _parse_contract_bid(cand)
+            lvl = int(parsed[0]) if parsed is not None else 9
+            return (-int(suit_lens[s]), lvl, _strain_order(s))
+
+        majors_sorted = sorted(majors, key=_sort_key)
+        minors_sorted = sorted(minors, key=_sort_key)
+        return majors_sorted + minors_sorted
+
+    order = _response_order()
+
+    def _pick_simple_response() -> tuple[str | None, str | None]:
+        for need_len in (preferred_len, minimum_len):
+            for s in order:
+                if int(suit_lens[s]) < int(need_len):
+                    continue
+                cand = _lowest_higher_bid_for_strain(highest_contract, s)
+                if cand is None:
+                    continue
+                return s, cand
+        return None, None
+
+    def _pick_jump_response() -> tuple[str | None, str | None]:
+        for s in order:
+            required_len = int(jump_len_min)
+            if s in ("H", "S"):
+                required_len = min(required_len, 4)
+            if int(suit_lens[s]) < required_len:
+                continue
+            cand = _jump_bid_for_strain(highest_contract, s)
+            if cand is None:
+                continue
+            return s, cand
+        return None, None
+
+    hcp_val = int(ctx["hcp"])
+    log_lines = [
+        f"{hand_tag} kontekst: makker oplysningsdoblede {_to_display_bid(doubled_bid)}.",
+        f"{hand_tag} hånd: {hcp_val} HCP, shape {_shape_text(ctx)}.",
+    ]
+    if interference:
+        log_lines.append(
+            f"{hand_tag} note: modparten meldte videre efter dobling; responder-interval sænkes (ca 5-10/11-12/12+)."
+        )
+
+    if is_balanced and stopper_in_opp:
+        for nt_bid in ("1NT", "2NT", "3NT"):
+            lo, hi = nt_ranges[nt_bid]
+            if lo <= hcp_val <= hi and _is_higher_contract(nt_bid, highest_contract):
+                display = _to_display_bid(nt_bid)
+                return {
+                    "dealer": seat,
+                    "profile": None,
+                    "bid": nt_bid,
+                    "display_bid": display,
+                    "rule_id": "takeout_double_response_notrump",
+                    "explanation": "Svar i sans med jævn hånd og hold i åbners farve.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} sanssvar: jævn hånd + hold i åbners farve -> {display} ({lo}-{hi} HCP).",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: takeout_double_response_notrump",
+                    ],
+                }
+
+    if hcp_val >= cuebid_hcp_min and opp_strain in ("S", "H", "D", "C"):
+        cuebid = _lowest_higher_bid_for_strain(highest_contract, opp_strain)
+        if cuebid is not None:
+            display = _to_display_bid(cuebid)
+            return {
+                "dealer": seat,
+                "profile": None,
+                "bid": cuebid,
+                "display_bid": display,
+                "rule_id": "takeout_double_response_cuebid",
+                "explanation": "Overmelding af åbners farve viser stærk hånd efter oplysningsdobling.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} cuebid: {hcp_val} HCP >= {cuebid_hcp_min} -> {display}.",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: takeout_double_response_cuebid",
+                ],
+            }
+
+    if jump_low <= hcp_val <= jump_high:
+        jump_suit, jump_bid = _pick_jump_response()
+        if jump_bid is not None:
+            display = _to_display_bid(jump_bid)
+            return {
+                "dealer": seat,
+                "profile": None,
+                "bid": jump_bid,
+                "display_bid": display,
+                "rule_id": "takeout_double_response_jump_new_suit",
+                "explanation": "Springsvar i ny farve efter oplysningsdobling viser konstruktive værdier.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} springsvar: {jump_low}-{jump_high} HCP og længde i {_to_display_bid(f'1{jump_suit}')[1:]} -> {display}.",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: takeout_double_response_jump_new_suit",
+                ],
+            }
+
+    if simple_low <= hcp_val <= simple_high:
+        simple_suit, simple_bid = _pick_simple_response()
+        if simple_bid is not None:
+            display = _to_display_bid(simple_bid)
+            return {
+                "dealer": seat,
+                "profile": None,
+                "bid": simple_bid,
+                "display_bid": display,
+                "rule_id": "takeout_double_response_new_suit",
+                "explanation": "Svar i billigste passende farve efter oplysningsdobling.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} ny farve: {simple_low}-{simple_high} HCP med major-prioritet -> {display}.",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: takeout_double_response_new_suit",
+                ],
+            }
+
+    return {
+        "dealer": seat,
+        "profile": None,
+        "bid": "PASS",
+        "display_bid": "PAS",
+        "rule_id": "takeout_double_response_pass",
+        "explanation": "Svarhånden finder ingen passende melding efter oplysningsdobling.",
+        "log_lines": log_lines + [
+            f"{hand_tag} svar: ingen passende ny farve/sans/cuebid i interval -> PAS.",
+            f"{hand_tag} valg: PAS",
+            f"{hand_tag} regel-id: takeout_double_response_pass",
+        ],
+    }
+
+
 def _suggest_third_hand_after_partner_open(
     row: Mapping[str, Any],
     third_seat: str,
@@ -1486,6 +1858,91 @@ def _suggest_third_hand_after_partner_open(
                         f"{hand_tag} regel: 1m-1NT viser cirka {one_nt_low}-{one_nt_high} HCP ({one_nt_forcing}).",
                         f"{hand_tag} valg: {display}",
                         f"{hand_tag} regel-id: responder_one_nt_over_minor_limited",
+                    ],
+                }
+
+    # Responder first call after 1S: weak raise is limited; stronger hands use 2-over-1 new suit.
+    if (
+        not opp_has_contract
+        and current_is_responder_first
+        and open_lvl == 1
+        and open_strain == "S"
+    ):
+        responder_hcp = int(ctx["hcp"])
+        support_len = int(suit_lens["S"])
+        one_nt_low, one_nt_high, one_nt_forcing, _ = _one_nt_over_major_params_for_seat(third_seat)
+        two_over_one_min, two_over_one_forcing, _ = _one_major_two_level_new_suit_rule_for_seat(third_seat)
+
+        # Keep direct 2M raises for support hands in the low/constructive zone.
+        if support_len >= 3 and 6 <= responder_hcp <= 10:
+            cand_raise = _lowest_higher_bid_for_strain(highest_contract, "S")
+            if cand_raise is not None:
+                display = _to_display_bid(cand_raise)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": cand_raise,
+                    "display_bid": display,
+                    "rule_id": "responder_direct_major_raise_weak",
+                    "explanation": "Direkte 2M-hævning bruges som svag støtte.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} regel: direkte majorhævning bruges i lav/kontruktiv zone (6-10 HCP).",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: responder_direct_major_raise_weak",
+                    ],
+                }
+
+        has_long_lower_suit = max(int(suit_lens["H"]), int(suit_lens["D"]), int(suit_lens["C"])) >= 5
+        if (
+            responder_hcp < two_over_one_min
+            and one_nt_low <= responder_hcp <= one_nt_high
+            and not has_long_lower_suit
+        ):
+            cand_nt = _lowest_higher_bid_for_strain(highest_contract, "NT")
+            if cand_nt is not None:
+                display = _to_display_bid(cand_nt)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": cand_nt,
+                    "display_bid": display,
+                    "rule_id": "responder_one_nt_over_major_limited",
+                    "explanation": "Med for få værdier til 2-over-1 vælges 1NT i aftalt interval.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} regel: 1M-2nyfarve kræver {two_over_one_min}+; hånd har {responder_hcp}.",
+                        f"{hand_tag} regel: 1M-1NT viser cirka {one_nt_low}-{one_nt_high} HCP ({one_nt_forcing}).",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: responder_one_nt_over_major_limited",
+                    ],
+                }
+
+        if responder_hcp >= two_over_one_min:
+            best_new = None
+            for s in sorted(("H", "D", "C"), key=lambda x: (suit_lens[x], _strain_order(x)), reverse=True):
+                if s in reserved:
+                    continue
+                if int(suit_lens[s]) < 4:
+                    continue
+                cand = _lowest_higher_bid_for_strain(highest_contract, s)
+                parsed = _parse_contract_bid(cand)
+                if cand is None or parsed is None or parsed[0] != 2:
+                    continue
+                best_new = cand
+                break
+
+            if best_new is not None:
+                display = _to_display_bid(best_new)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": best_new,
+                    "display_bid": display,
+                    "rule_id": "responder_two_over_one_new_suit",
+                    "explanation": "Ny farve på 2-trinnet bruges som 2-over-1 svar.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} regel: 1M-2nyfarve min {two_over_one_min}+ HCP ({two_over_one_forcing}).",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: responder_two_over_one_new_suit",
                     ],
                 }
 
@@ -1624,14 +2081,146 @@ def _suggest_third_hand_after_partner_open(
                 ],
             }
 
+    # Opener rebid after 1M-2(new suit): prefer rebid of opening major to show minimum.
+    if (
+        not opp_has_contract
+        and current_is_opener_rebid
+        and len(side_history) == 2
+        and _is_two_over_one_new_suit(open_strain, resp_strain, resp_lvl)
+    ):
+        two_over_one_min, two_over_one_forcing, _ = _one_major_two_level_new_suit_rule_for_seat(third_seat)
+        opener_bucket = _opener_strength_bucket_for_hcp(third_seat, int(ctx["hcp"]))
+        opening_len = int(suit_lens.get(str(open_strain), 0))
+
+        if opening_len >= 6 and opener_bucket == "weak":
+            cand_major = _lowest_higher_bid_for_strain(highest_contract, str(open_strain))
+            if cand_major is not None:
+                display = _to_display_bid(cand_major)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": cand_major,
+                    "display_bid": display,
+                    "rule_id": "opener_rebid_after_1M_2new_rebid_major",
+                    "explanation": "Åbner genmelder lang major som minimumsbeskrivelse efter 2-over-1.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} regel: svar 1M-2nyfarve tolkes som min {two_over_one_min}+ HCP ({two_over_one_forcing}).",
+                        f"{hand_tag} styrke/længde: weak-bucket + {opening_len}-kort major -> rebid af major.",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: opener_rebid_after_1M_2new_rebid_major",
+                    ],
+                }
+
+        for s in sorted(("S", "H", "D", "C"), key=lambda x: (suit_lens[x], _strain_order(x)), reverse=True):
+            if s in reserved or s == open_strain or s == resp_strain:
+                continue
+            if int(suit_lens[s]) < 4:
+                continue
+            cand = _lowest_higher_bid_for_strain(highest_contract, s)
+            if cand is None:
+                continue
+            display = _to_display_bid(cand)
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": cand,
+                "display_bid": display,
+                "rule_id": "opener_rebid_after_1M_2new_show_side_suit",
+                "explanation": "Åbner viser sidefarve efter 2-over-1.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} regel: svar 1M-2nyfarve tolkes som min {two_over_one_min}+ HCP ({two_over_one_forcing}).",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: opener_rebid_after_1M_2new_show_side_suit",
+                ],
+            }
+
+        cand_major = _lowest_higher_bid_for_strain(highest_contract, str(open_strain))
+        if cand_major is not None:
+            display = _to_display_bid(cand_major)
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": cand_major,
+                "display_bid": display,
+                "rule_id": "opener_rebid_after_1M_2new_rebid_major",
+                "explanation": "Åbner genmelder major som minimumsbeskrivelse efter 2-over-1.",
+                "log_lines": log_lines + [
+                    f"{hand_tag} regel: svar 1M-2nyfarve tolkes som min {two_over_one_min}+ HCP ({two_over_one_forcing}).",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: opener_rebid_after_1M_2new_rebid_major",
+                ],
+            }
+
+    # Responder continuation after 1M-2new-2M: with fit + game values, place contract in 4M.
+    if (
+        not opp_has_contract
+        and len(side_history) >= 3
+        and side_opening is not None
+        and side_response is not None
+        and open_seat != third_seat
+        and resp_seat == third_seat
+        and _is_two_over_one_new_suit(open_strain, resp_strain, resp_lvl)
+    ):
+        third_seat_side, third_lvl_side, third_strain_side = side_history[2]
+        if third_seat_side == open_seat and third_strain_side == open_strain and int(third_lvl_side) >= 2:
+            support_min, game_hcp_min, game_pp_min = _one_major_two_level_new_suit_then_major_rebid_params_for_seat(third_seat)
+            trump_len = int(suit_lens.get(str(open_strain), 0))
+            if trump_len >= support_min:
+                play_pts, relation, shortness_pts, trump_len_bonus, _ = _playing_points_after_fit(
+                    ctx,
+                    third_seat,
+                    str(open_strain),
+                    row.get("vul") if isinstance(row, Mapping) else None,
+                )
+                if int(ctx["hcp"]) >= game_hcp_min or int(play_pts) >= game_pp_min:
+                    target = f"4{open_strain}"
+                    if _is_higher_contract(target, highest_contract):
+                        relation_dk = {
+                            "favorable": "gunstig",
+                            "equal": "lige",
+                            "unfavorable": "ugunstig",
+                        }.get(relation, "lige")
+                        display = _to_display_bid(target)
+                        return {
+                            "dealer": third_seat,
+                            "profile": None,
+                            "bid": target,
+                            "display_bid": display,
+                            "rule_id": "responder_after_1M_2new_2M_game_place",
+                            "explanation": "Svarer placerer kontrakten i udgang efter 1M-2ny-2M med fit og game-værdier.",
+                            "log_lines": log_lines + [
+                                (
+                                    f"{hand_tag} fit-point: HCP {int(ctx['hcp'])} + shortness {shortness_pts} "
+                                    f"+ trumflængdebonus {trump_len_bonus} = {play_pts} ({relation_dk} zone)."
+                                ),
+                                f"{hand_tag} regel: 1M-2ny-2M med fit {trump_len} (min {support_min}), game ved HCP>={game_hcp_min} eller fit-point>={game_pp_min}.",
+                                f"{hand_tag} valg: {display}",
+                                f"{hand_tag} regel-id: responder_after_1M_2new_2M_game_place",
+                            ],
+                        }
+
     force_rebid_after_1d_1s = (
         not opp_has_contract
         and current_is_opener_rebid
+        and len(side_history) == 2
         and open_lvl == 1
         and open_strain == "D"
         and resp_lvl == 1
         and resp_strain == "S"
         and _one_diamond_one_spade_forcing_rule_for_seat(third_seat)[1] in ("one_round", "game_force")
+    )
+
+    two_over_one_forcing, two_over_one_opener_may_pass = "", True
+    if current_is_opener_rebid:
+        _, two_over_one_forcing, two_over_one_opener_may_pass = _one_major_two_level_new_suit_rule_for_seat(third_seat)
+
+    force_rebid_after_1M_2new = (
+        not opp_has_contract
+        and current_is_opener_rebid
+        and len(side_history) == 2
+        and _is_two_over_one_new_suit(open_strain, resp_strain, resp_lvl)
+        and two_over_one_forcing in ("one_round", "game_force")
+        and (not two_over_one_opener_may_pass)
     )
 
     # Reply to partner's prior fourth-suit forcing ask.
@@ -1910,7 +2499,16 @@ def _suggest_third_hand_after_partner_open(
             ],
         }
 
+    force_rebid_rule_id = None
+    force_rebid_note = ""
     if force_rebid_after_1d_1s:
+        force_rebid_rule_id = "opener_rebid_after_1d_1s_forced_rebid"
+        force_rebid_note = "1♦-1♠ er forcerende én runde; PAS ikke tilladt."
+    elif force_rebid_after_1M_2new:
+        force_rebid_rule_id = "opener_rebid_after_1M_2new_forced_rebid"
+        force_rebid_note = "1M-ny farve på 2-trinnet er forcerende; PAS ikke tilladt."
+
+    if force_rebid_rule_id is not None:
         cand_nt = _lowest_higher_bid_for_strain(highest_contract, "NT")
         if cand_nt is not None:
             display = _to_display_bid(cand_nt)
@@ -1919,12 +2517,12 @@ def _suggest_third_hand_after_partner_open(
                 "profile": None,
                 "bid": cand_nt,
                 "display_bid": display,
-                "rule_id": "opener_rebid_after_1d_1s_forced_rebid",
-                "explanation": "1D-1S er forcerende én runde; åbner skal byde igen.",
+                "rule_id": force_rebid_rule_id,
+                "explanation": "Forcerende sekvens: åbner skal byde igen.",
                 "log_lines": log_lines + [
-                    f"{hand_tag} regel: 1♦-1♠ er forcerende én runde; PAS ikke tilladt.",
+                    f"{hand_tag} regel: {force_rebid_note}",
                     f"{hand_tag} valg: {display}",
-                    f"{hand_tag} regel-id: opener_rebid_after_1d_1s_forced_rebid",
+                    f"{hand_tag} regel-id: {force_rebid_rule_id}",
                 ],
             }
 
@@ -1938,12 +2536,12 @@ def _suggest_third_hand_after_partner_open(
                 "profile": None,
                 "bid": cand,
                 "display_bid": display,
-                "rule_id": "opener_rebid_after_1d_1s_forced_rebid",
-                "explanation": "1D-1S er forcerende én runde; åbner skal byde igen.",
+                "rule_id": force_rebid_rule_id,
+                "explanation": "Forcerende sekvens: åbner skal byde igen.",
                 "log_lines": log_lines + [
-                    f"{hand_tag} regel: 1♦-1♠ er forcerende én runde; PAS ikke tilladt.",
+                    f"{hand_tag} regel: {force_rebid_note}",
                     f"{hand_tag} valg: {display}",
-                    f"{hand_tag} regel-id: opener_rebid_after_1d_1s_forced_rebid",
+                    f"{hand_tag} regel-id: {force_rebid_rule_id}",
                 ],
             }
 
@@ -2091,6 +2689,23 @@ def _infer_public_bid_evidence(state: Any, seat: str, bid: str) -> BidEvidence:
         evidence.notes.append(f"1D-1S: min {hcp_min} HCP, {forcing}, limited={limited}.")
         return evidence
 
+    if (
+        level == 2
+        and strain in ("S", "H", "D", "C")
+        and latest_side_contract is not None
+        and latest_side_contract[0] != seat
+        and latest_side_contract[1] == 1
+        and _is_two_over_one_new_suit(latest_side_contract[2], strain, level)
+    ):
+        hcp_min, forcing, opener_may_pass = _one_major_two_level_new_suit_rule_for_seat(seat)
+        evidence.natural_strain = strain
+        evidence.suit_min[strain] = 4
+        evidence.hcp_range = ValueRange(float(hcp_min), 37.0)
+        evidence.notes.append(
+            f"1{latest_side_contract[2]}-2{strain}: min {hcp_min} HCP, {forcing}, opener_may_pass={opener_may_pass}."
+        )
+        return evidence
+
     if strain == "NT":
         if level == 1:
             evidence.hcp_range = ValueRange(14.0, 18.0)
@@ -2213,9 +2828,11 @@ def _apply_state_ceiling_to_call(
             required = 6 + parsed_bid[0]
             rule_id_txt = str(out.get("rule_id") or "")
             keep_constructive_3nt = "fourth_suit_reply_3nt_with_stopper" in rule_id_txt
+            keep_game_place_major = "responder_after_1M_2new_2M_game_place" in rule_id_txt
             hard_reject = required > (estimate.tricks_range.high + 0.01)
             soft_reject = (
                 (not keep_constructive_3nt)
+                and (not keep_game_place_major)
                 and estimate.confidence >= 0.35
                 and required > (estimate.tricks_range.midpoint + 0.50)
             )
@@ -2302,6 +2919,7 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
 
         partner_seat = _partner_of(seat)
         partner_contract = None
+        partner_last_call = None
         own_contracts: list[str] = []
         opp_contracts: list[str] = []
 
@@ -2309,8 +2927,11 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
             prev_seat = _normalize_seat(prev.get("dealer"))
             prev_bid = str(prev.get("bid") or "PASS").upper()
             if prev_seat is None or _parse_contract_bid(prev_bid) is None:
+                if prev_seat == partner_seat:
+                    partner_last_call = prev
                 continue
             if prev_seat == partner_seat:
+                partner_last_call = prev
                 partner_contract = prev_bid
             if _seat_side(prev_seat) == _seat_side(seat):
                 own_contracts.append(prev_bid)
@@ -2343,6 +2964,25 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                 opp_highest,
                 hand_tag=hand_tag,
                 reserved_cuebid_strains=reserved,
+                prior_calls=call_sequence,
+            )
+            call = _legalize_competitive_contract(call, highest_contract, hand_tag)
+            call = _apply_state_ceiling_to_call(row, call_sequence, seat, call, hand_tag)
+            call_sequence.append(call)
+            continue
+
+        partner_last_bid = str((partner_last_call or {}).get("bid") or "PASS").upper()
+        partner_last_rule = str((partner_last_call or {}).get("rule_id") or "")
+        if (
+            partner_contract is None
+            and partner_last_bid in ("X", "DBL", "DOUBLE")
+            and "takeout_double" in partner_last_rule
+        ):
+            call = _suggest_response_after_partner_takeout_double(
+                row,
+                seat,
+                highest_contract,
+                hand_tag=hand_tag,
                 prior_calls=call_sequence,
             )
             call = _legalize_competitive_contract(call, highest_contract, hand_tag)

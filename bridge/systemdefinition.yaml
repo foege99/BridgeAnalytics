@@ -1315,6 +1315,45 @@ system_library:
           forcing: one_round
           responder_limited: false
 
+        one_major_two_level_new_suit:
+          description: >
+            New suit at the 2-level over a major opening (the 2/1 response).
+            Examples: 1H-2C, 1H-2D, 1S-2C, 1S-2D, 1S-2H.
+            Must be a lower-ranking suit (strictly below the opening major).
+          openings: ["1H", "1S"]
+          default_hcp_min: 10
+          forcing: one_round
+          opener_may_pass: false
+          note: >
+            Without 2/1 game force: 10+ HCP, one-round force.
+            Opener is NEVER allowed to pass a new suit at the 2-level from responder.
+          if_two_over_one_game_force:
+            hcp_min: 13
+            forcing: game_force
+            opener_may_pass: false
+            note: >
+              With 2/1 game force active (Henrik/Per): 13+ HCP, unconditional game force.
+              The auction cannot stop below game once responder bids a new suit at the 2-level.
+
+        one_major_two_level_new_suit_then_major_rebid:
+          description: >
+            Responder continuation after 1M-2new-2M when fit exists.
+            With game values and fit, responder should place the contract in 4M.
+          support_min: 3
+          game_hcp_min: 12
+          game_playing_points_min: 14
+          action_with_game_values: raise_to_four_major
+          note: >
+            Applies after opener's minimum-style rebid of the opening major.
+            Uses responder playing points to account for fit and shortness.
+          if_two_over_one_game_force:
+            support_min: 3
+            game_hcp_min: 12
+            game_playing_points_min: 13
+            action_with_game_values: raise_to_four_major
+            note: >
+              In game-force style, sub-game continuation is generally avoided when fit and game values are present.
+
       opener_rebids:
 
         after_one_major_two_major_raise:
@@ -1598,24 +1637,24 @@ system_library:
           minimum_possible:
             cards: 3
           strength:
-            hcp_range: [0,9]
+            hcp_range: [0,7]
           forcing: false
 
         jump_new_suit:
           meaning: invitational
-          hcp_range: [9,11]
-          suit_length_min: 5
+          hcp_range: [8,11]
+          suit_length_min: 4
           forcing: one_round
 
         notrump_responses_default:
           "1NT":
             meaning: natural
-            hcp_range: [6,10]
+            hcp_range: [6,9]
             stopper_in_opponent_suit: true
             shape: balanced
           "2NT":
             meaning: natural
-            hcp_range: [11,12]
+            hcp_range: [10,12]
             stopper_in_opponent_suit: true
             shape: balanced
           "3NT":
