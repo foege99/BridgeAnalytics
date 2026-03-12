@@ -1,7 +1,7 @@
 import sys
 import argparse
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pandas as pd
 import requests
 
@@ -31,6 +31,10 @@ except ImportError:
 from bridge.data_cache import DataCache
 from bridge.crawler import get_recent_tournaments
 from bridge.scraper import scrape_spilresultater
+from bridge.board_identity import (
+    make_cross_club_board_identity_check,
+    print_cross_club_board_identity_summary,
+)
 
 from bridge.features import add_hand_features
 
@@ -76,10 +80,53 @@ PER = "Per Føge Jensen"
 REPORT_EVENING_SHEET = "Rapport - Aften"
 REPORT_QUARTER_SHEET = "Rapport - Kvartal"
 PARTNER_COLUMNS_TO_REMOVE = ["Henrik_Defence_Partner", "Per_Defence_Partner"]
+DEFAULT_MAINCLUBNO = 2183
+DEFAULT_CLUBNOS = (1, 2, 3)
 
 # Use unique filename to avoid Windows file-lock issues
 OUTPUT_FILE = f"Henrik_Per_ANALYSE_{datetime.now():%Y%m%d_%H%M}.xlsx"
 LATEST_OUTPUT_FILE = "Henrik_Per_ANALYSE_latest.xlsx"
+
+
+def _parse_clubnos(clubnos_text: str | None) -> list[int]:
+    """Parse comma-separated club list to unique int list."""
+    if not clubnos_text:
+        return list(DEFAULT_CLUBNOS)
+
+    out: list[int] = []
+    for part in str(clubnos_text).split(","):
+        txt = part.strip()
+        if not txt:
+            continue
+        try:
+            clubno = int(txt)
+        except ValueError:
+            continue
+        if clubno not in out:
+            out.append(clubno)
+    return out
+
+
+def _last_tuesday(today: date | None = None) -> date:
+    """Return the most recent Tuesday before today (or today if Tuesday)."""
+    now = today or datetime.now().date()
+    # Monday=0 ... Sunday=6; Tuesday is 1
+    days_since_tuesday = (now.weekday() - 1) % 7
+    return now - timedelta(days=days_since_tuesday)
+
+
+def _club_matches_request(requested_clubs: list[int], clubno_value) -> bool:
+    """Match cache/scrape item club against requested clubs with legacy fallback."""
+    if not requested_clubs:
+        return True
+
+    try:
+        if clubno_value is None:
+            # Legacy cache entries without clubno were historically club 2.
+            return 2 in requested_clubs
+        return int(clubno_value) in requested_clubs
+    except (TypeError, ValueError):
+        return False
 
 
 def _apply_red_suit_symbols(cell) -> None:
@@ -330,6 +377,35 @@ def parse_arguments():
         action='store_true',
         help='Lav backup af cache før start'
     )
+
+    parser.add_argument(
+        '--mainclubno',
+        type=int,
+        default=DEFAULT_MAINCLUBNO,
+        help='Bridge.dk mainclubno (default: 2183)'
+    )
+
+    parser.add_argument(
+        '--clubnos',
+        type=str,
+        default=','.join(str(c) for c in DEFAULT_CLUBNOS),
+        help='Komma-separerede clubno streams (fx 1,2,3)'
+    )
+
+    parser.add_argument(
+        '--last-tuesday-only',
+        dest='last_tuesday_only',
+        action='store_true',
+        default=True,
+        help='Test-mode: begræns til sidste tirsdag (default: aktiv)'
+    )
+
+    parser.add_argument(
+        '--no-last-tuesday-only',
+        dest='last_tuesday_only',
+        action='store_false',
+        help='Deaktivér test-mode og brug normal periode-udvælgelse'
+    )
     
     return parser.parse_args()
 
@@ -339,15 +415,55 @@ def _load_all_cached_rows(cache: DataCache) -> list[dict]:
     rows: list[dict] = []
 
     tournaments = cache.manifest.get("tournaments", {})
-    tids: list[int] = []
-    for tid_txt in tournaments.keys():
-        try:
-            tids.append(int(tid_txt))
-        except (TypeError, ValueError):
+    entries: list[dict] = []
+    for cache_key, tmeta in tournaments.items():
+        if not isinstance(tmeta, dict):
             continue
 
-    for tid in sorted(tids):
-        cached_data = cache.get_cached_tournament(tid)
+        tid_val = tmeta.get("tournament_id")
+        try:
+            tid = int(tid_val)
+        except (TypeError, ValueError):
+            key_tail = str(cache_key).split(":")[-1]
+            try:
+                tid = int(key_tail)
+            except (TypeError, ValueError):
+                continue
+
+        clubno_val = tmeta.get("clubno")
+        try:
+            clubno = int(clubno_val) if clubno_val is not None else None
+        except (TypeError, ValueError):
+            clubno = None
+
+        if clubno is None and ":" in str(cache_key):
+            key_head = str(cache_key).split(":", 1)[0]
+            try:
+                clubno = int(key_head)
+            except (TypeError, ValueError):
+                clubno = None
+
+        mainclubno_val = tmeta.get("mainclubno")
+        try:
+            mainclubno = int(mainclubno_val) if mainclubno_val is not None else None
+        except (TypeError, ValueError):
+            mainclubno = None
+
+        entries.append(
+            {
+                "cache_key": str(cache_key),
+                "tournament_id": tid,
+                "clubno": clubno,
+                "mainclubno": mainclubno,
+            }
+        )
+
+    for entry in sorted(entries, key=lambda e: e["cache_key"]):
+        tid = entry["tournament_id"]
+        clubno = entry["clubno"]
+        mainclubno = entry["mainclubno"]
+
+        cached_data = cache.get_cached_tournament(tid, clubno=clubno)
         if not cached_data:
             continue
 
@@ -369,6 +485,15 @@ def _load_all_cached_rows(cache: DataCache) -> list[dict]:
                 if not row.get("section"):
                     row["section"] = section_name
 
+                if not row.get("clubno") and clubno is not None:
+                    row["clubno"] = clubno
+
+                if not row.get("mainclubno") and mainclubno is not None:
+                    row["mainclubno"] = mainclubno
+
+                if not row.get("tournament_id"):
+                    row["tournament_id"] = tid
+
                 # Normalize date field name for downstream grouping.
                 if not row.get("tournament_date") and row.get("date"):
                     row["tournament_date"] = row.get("date")
@@ -380,6 +505,11 @@ def _load_all_cached_rows(cache: DataCache) -> list[dict]:
 
 def main():
     args = parse_arguments()
+    requested_clubs = _parse_clubnos(args.clubnos)
+
+    if not requested_clubs:
+        print("Ingen gyldige clubno værdier fundet. Brug fx --clubnos=1,2,3")
+        return
     
     # ==================== SETUP CACHE ====================
     print("🚀 Initialiserer cache system...")
@@ -405,31 +535,52 @@ def main():
     
     # ==================== PARSE DATE RANGE ====================
     print("Starter crawler + scraper + analyse...")
-    
-    start_date, end_date = cache.parse_date_range(
-        cutoff=args.cutoff,
-        from_date=args.from_date,
-        to_date=args.to_date
-    )
+
+    has_explicit_date_args = bool(args.cutoff or args.from_date or args.to_date)
+    if args.last_tuesday_only and not has_explicit_date_args:
+        target_tuesday = _last_tuesday()
+        start_date, end_date = target_tuesday, target_tuesday
+        print(f"📅 TEST-MODE: sidste tirsdag = {target_tuesday}")
+    else:
+        start_date, end_date = cache.parse_date_range(
+            cutoff=args.cutoff,
+            from_date=args.from_date,
+            to_date=args.to_date
+        )
     
     force_refresh = args.force_refresh
     if force_refresh:
         print("🔄 FORCE REFRESH MODE - Scraper alt på tværs af regler")
     
     # ==================== CRAWL BRIDGE.DK ====================
-    print(f"📡 Søger turneringer på bridge.dk fra {start_date} til {end_date}...")
+    print(
+        f"📡 Søger turneringer på bridge.dk fra {start_date} til {end_date} "
+        f"(mainclubno={args.mainclubno}, clubno={requested_clubs})..."
+    )
 
     online_mode = True
     tournaments_in_range = []
 
     try:
-        # Crawler finder turneringer fra bridge.dk
-        all_tournaments_on_site = get_recent_tournaments(start_date)
+        # Crawler finder turneringer fra bridge.dk for hver ønsket club stream
+        all_tournaments_on_site: list[dict] = []
+        for clubno in requested_clubs:
+            club_tournaments = get_recent_tournaments(
+                start_date,
+                mainclubno=args.mainclubno,
+                clubno=clubno,
+            )
+            print(f"  Club {clubno}: {len(club_tournaments)} turneringer fundet")
+            all_tournaments_on_site.extend(club_tournaments)
     except requests.exceptions.RequestException as exc:
         online_mode = False
         print(f"⚠ Netværksfejl mod bridge.dk: {exc}")
         print("⚠ Fallback: bruger kun lokale cache-data i valgt periode.")
-        tournaments_in_range = cache.get_cached_tournaments_in_range(start_date, end_date)
+        tournaments_in_range = [
+            t
+            for t in cache.get_cached_tournaments_in_range(start_date, end_date)
+            if _club_matches_request(requested_clubs, t.get('clubno'))
+        ]
         if not tournaments_in_range:
             print("Ingen cachede turneringer fundet i perioden, og bridge.dk kunne ikke nås.")
             return
@@ -439,15 +590,22 @@ def main():
             print("Ingen turneringer fundet indenfor perioden.")
             return
 
-        print(f"Antal turneringer fundet på bridge.dk: {len(all_tournaments_on_site)}")
+        print(f"Antal turneringer fundet på bridge.dk (alle clubs): {len(all_tournaments_on_site)}")
 
         # Filter turneringer til vores periode
         tournaments_in_range = [
             t for t in all_tournaments_on_site
             if start_date <= t['date'].date() <= end_date
+            and _club_matches_request(requested_clubs, t.get('clubno'))
         ]
 
         print(f"Antal turneringer i periode [{start_date} - {end_date}]: {len(tournaments_in_range)}")
+
+    tournaments_in_range = sorted(
+        tournaments_in_range,
+        key=lambda t: (t.get('date'), t.get('clubno') or -1, t.get('tournament_id')),
+        reverse=True,
+    )
     
     # ==================== BESLUT OM SCRAPING ====================
     print("\n📋 Beslutter hvad skal skrabes...")
@@ -463,6 +621,7 @@ def main():
         for tournament in tournaments_in_range:
             tournament_id = tournament['tournament_id']
             tournament_date = tournament['date']
+            clubno = tournament.get('clubno')
             
             # Tjek om bruger specifikt bad om denne periode (hvis --from/--to er brugt)
             user_requested_older = bool(args.from_date and args.to_date)
@@ -470,6 +629,7 @@ def main():
             should_scrape = cache.should_scrape_tournament(
                 tournament_id=tournament_id,
                 tournament_date=tournament_date,
+                clubno=clubno,
                 force_refresh=force_refresh,
                 user_requested_older=user_requested_older
             )
@@ -493,12 +653,23 @@ def main():
         tournament_id = tournament['tournament_id']
         tdate = tournament['date']
         sections = tournament['sections']
+        clubno = tournament.get('clubno')
+        mainclubno = tournament.get('mainclubno', args.mainclubno)
         
-        print(f"\n({t_idx}/{len(tournaments_to_scrape)}) SCRAPE: {tdate.date()} – Turnering {tournament_id}")
+        print(
+            f"\n({t_idx}/{len(tournaments_to_scrape)}) SCRAPE: {tdate.date()} – "
+            f"Turnering {tournament_id} (club {clubno})"
+        )
         print(f"  Sections: {', '.join([s['name'] for s in sections])}")
         
         tournament_rows = []
-        tournament_data = {"tournament_id": tournament_id, "date": str(tdate.date()), "sections": {}}
+        tournament_data = {
+            "tournament_id": tournament_id,
+            "clubno": clubno,
+            "mainclubno": mainclubno,
+            "date": str(tdate.date()),
+            "sections": {},
+        }
         
         # Scrape hver section
         for section in sections:
@@ -518,6 +689,9 @@ def main():
                 # Tilføj section kolonne
                 for row in rows:
                     row['section'] = section_name
+                    row['clubno'] = clubno
+                    row['mainclubno'] = mainclubno
+                    row['tournament_id'] = tournament_id
                 
                 print(f"      ✓ {len(rows)} rækker")
                 tournament_rows.extend(rows)
@@ -532,7 +706,9 @@ def main():
                 tournament_id=tournament_id,
                 tournament_date=tdate,
                 sections=sections,
-                data=tournament_data
+                data=tournament_data,
+                clubno=clubno,
+                mainclubno=mainclubno,
             )
             all_rows.extend(tournament_rows)
             tournaments_scraped += 1
@@ -543,17 +719,22 @@ def main():
     for tournament in tournaments_to_use_cache:
         tournament_id = tournament['tournament_id']
         tdate = tournament['date']
+        clubno = tournament.get('clubno')
+        mainclubno = tournament.get('mainclubno', args.mainclubno)
         
-        cached_data = cache.get_cached_tournament(tournament_id)
+        cached_data = cache.get_cached_tournament(tournament_id, clubno=clubno)
         
         if cached_data:
-            print(f"  ✓ Turnering {tournament_id} ({tdate.date()}) - fra cache")
+            print(f"  ✓ Turnering {tournament_id} ({tdate.date()}, club {clubno}) - fra cache")
             
             # ✅ KONVERTER strings tilbage til datetime
             # Fordi JSON lagrer alt som strings
             for section_name, rows in cached_data.get("sections", {}).items():
                 for row in rows:
                     row['section'] = section_name
+                    row['clubno'] = row.get('clubno', clubno)
+                    row['mainclubno'] = row.get('mainclubno', mainclubno)
+                    row['tournament_id'] = row.get('tournament_id', tournament_id)
                     
                     # Konverter date strings tilbage til date objekter
                     if 'date' in row and isinstance(row['date'], str):
@@ -564,17 +745,71 @@ def main():
                     
                     all_rows.append(row)
         else:
-            print(f"  ❌ Turnering {tournament_id} ({tdate.date()}) - FEJL, cache findes ikke")# ==================== PROCESS DATA ====================
+            print(f"  ❌ Turnering {tournament_id} ({tdate.date()}, club {clubno}) - FEJL, cache findes ikke")# ==================== PROCESS DATA ====================
     
     if not all_rows:
         print("Ingen data fundet.")
         return
     
     df_all = pd.DataFrame(all_rows)
+
+    if 'clubno' in df_all.columns:
+        df_all['clubno'] = pd.to_numeric(df_all['clubno'], errors='coerce')
     
     print(f"\n✓ I alt {len(df_all)} rækker fra {len(tournaments_in_range)} turneringer")
     print(f"  Sections: {df_all['section'].unique().tolist()}")
     print(f"  Scraped: {tournaments_scraped}, fra Cache: {len(tournaments_to_use_cache)}")
+
+    # ✅ KLUB-IDENTITETSCHECK + FILTER AF MISMATCHED BOARDS
+    print("\nChecker board-identitet på tværs af clubno + rækker (A/B/C)...")
+    proof_date = start_date if start_date == end_date else None
+    df_cross_club_board_check, cross_club_summary = make_cross_club_board_identity_check(
+        df_all,
+        clubs=tuple(requested_clubs),
+        rows=('A', 'B', 'C'),
+        board_start=1,
+        board_end=24,
+        target_date=proof_date,
+    )
+    print_cross_club_board_identity_summary(cross_club_summary)
+
+    ok_boards = set(
+        pd.to_numeric(
+            df_cross_club_board_check.loc[
+                df_cross_club_board_check['status'] == 'OK',
+                'board_no',
+            ],
+            errors='coerce',
+        ).dropna().astype(int).tolist()
+    )
+
+    target_date_txt = cross_club_summary.get('target_date')
+    target_date_obj = None
+    if isinstance(target_date_txt, str) and target_date_txt:
+        try:
+            target_date_obj = datetime.strptime(target_date_txt, '%Y-%m-%d').date()
+        except ValueError:
+            target_date_obj = None
+
+    if target_date_obj is not None:
+        df_all['_tdate_filter'] = pd.to_datetime(df_all['tournament_date'], errors='coerce').dt.date
+        board_int = pd.to_numeric(df_all['board_no'], errors='coerce')
+        before_rows = len(df_all)
+        keep_mask = (
+            (df_all['_tdate_filter'] != target_date_obj)
+            | board_int.isin(ok_boards)
+        )
+        df_all = df_all[keep_mask].copy()
+        df_all = df_all.drop(columns=['_tdate_filter'], errors='ignore')
+        removed_rows = before_rows - len(df_all)
+        print(
+            f"  ✓ Mismatch-filter aktiv på {target_date_obj}: "
+            f"{len(ok_boards)} OK boards, {removed_rows} rækker ekskluderet"
+        )
+
+    if df_all.empty:
+        print("Ingen data tilbage efter board-identitetsfilter.")
+        return
 
     # ✅ IDENTIFICER B/C RESULTATER + CHECK BOARD-KONSISTENS A/B/C
     print("\nChecker board-konsistens på tværs af rækker A/B/C (seneste turnering)...")
@@ -665,27 +900,33 @@ def main():
     # ✅ KLASSISKE RAPPORTER
     print("\nGenererer klassiske rapporter...")
 
-    # Build classic reports from all cached tournaments (A-row), not just current date range.
-    cached_rows_all = _load_all_cached_rows(cache)
-    if cached_rows_all:
-        df_classic_source = pd.DataFrame(cached_rows_all)
-        if "section" in df_classic_source.columns:
-            df_classic_source = df_classic_source[df_classic_source["section"] == "A"].copy()
-        if "tournament_date" not in df_classic_source.columns and "date" in df_classic_source.columns:
-            df_classic_source["tournament_date"] = df_classic_source["date"]
+    # Build classic reports from current filtered dataset in last-tuesday test mode.
+    use_cache_history_for_classic = not args.last_tuesday_only
 
-        unique_dates = (
-            df_classic_source["tournament_date"].nunique()
-            if "tournament_date" in df_classic_source.columns
-            else 0
-        )
-        print(
-            f"  ℹ Klassiske rapporter bruger cache-historik: "
-            f"{len(df_classic_source)} A-række rækker på {unique_dates} spilledatoer"
-        )
+    if use_cache_history_for_classic:
+        cached_rows_all = _load_all_cached_rows(cache)
+        if cached_rows_all:
+            df_classic_source = pd.DataFrame(cached_rows_all)
+            if "section" in df_classic_source.columns:
+                df_classic_source = df_classic_source[df_classic_source["section"] == "A"].copy()
+            if "tournament_date" not in df_classic_source.columns and "date" in df_classic_source.columns:
+                df_classic_source["tournament_date"] = df_classic_source["date"]
+
+            unique_dates = (
+                df_classic_source["tournament_date"].nunique()
+                if "tournament_date" in df_classic_source.columns
+                else 0
+            )
+            print(
+                f"  ℹ Klassiske rapporter bruger cache-historik: "
+                f"{len(df_classic_source)} A-række rækker på {unique_dates} spilledatoer"
+            )
+        else:
+            df_classic_source = df_a_only.copy()
+            print("  ⚠ Ingen cache-historik fundet; bruger kun valgte periode.")
     else:
         df_classic_source = df_a_only.copy()
-        print("  ⚠ Ingen cache-historik fundet; bruger kun valgte periode.")
+        print("  ℹ Klassiske rapporter bruger filtreret test-datasæt (sidste tirsdag).")
 
     # Filter til kun boards hvor de spiller sammen
     df_pair_all = df_classic_source[
@@ -731,6 +972,15 @@ def main():
     # ✅ SKRIV EXCEL
     print(f"\nSkriver Excel: {OUTPUT_FILE}")
     with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
+        if not df_cross_club_board_check.empty:
+            df_cross_club_board_check.to_excel(writer, sheet_name='Board_Club_Proof', index=False)
+        if cross_club_summary:
+            pd.DataFrame([cross_club_summary]).to_excel(
+                writer,
+                sheet_name='Board_Club_Proof_Summary',
+                index=False,
+            )
+
         # A/B/C board consistency + other-row results (latest tournament)
         if not df_board_abc_check.empty:
             df_board_abc_check.to_excel(writer, sheet_name='Board_ABC_Check', index=False)

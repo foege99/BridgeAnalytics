@@ -57,6 +57,31 @@ class DataCache:
         """Save manifest to JSON"""
         with open(self.manifest_file, 'w', encoding='utf-8') as f:
             json.dump(self.manifest, f, indent=2, ensure_ascii=False)
+
+    def _cache_key(self, tournament_id: int, clubno: Optional[int] = None) -> str:
+        """Create manifest/cache key; include club when provided."""
+        tid = int(tournament_id)
+        if clubno is None:
+            return str(tid)
+        return f"{int(clubno)}:{tid}"
+
+    def _cache_file_from_key(self, cache_key: str) -> Path:
+        """Map cache key to a Windows-safe JSON filename."""
+        safe_key = str(cache_key).replace(':', '_')
+        return self.tournaments_dir / f"tournament_{safe_key}.json"
+
+    def _cache_keys_for_lookup(self, tournament_id: int, clubno: Optional[int] = None) -> List[str]:
+        """Return lookup keys, preferring club-specific key and then legacy key."""
+        keys: List[str] = []
+        if clubno is not None:
+            keys.append(self._cache_key(tournament_id, clubno=clubno))
+        keys.append(self._cache_key(tournament_id, clubno=None))
+
+        out: List[str] = []
+        for key in keys:
+            if key not in out:
+                out.append(key)
+        return out
     
     # ==================== DATE RANGE PARSING ====================
     
@@ -103,6 +128,7 @@ class DataCache:
         self,
         tournament_id: int,
         tournament_date: datetime,
+        clubno: Optional[int] = None,
         force_refresh: bool = False,
         user_requested_older: bool = False
     ) -> bool:
@@ -114,35 +140,39 @@ class DataCache:
             tournament_date = tournament_date.date()
         
         days_old = (today - tournament_date).days
-        is_in_cache = str(tournament_id) in self.manifest["tournaments"]
+        cache_keys = self._cache_keys_for_lookup(tournament_id, clubno=clubno)
+        is_in_cache = any(key in self.manifest["tournaments"] for key in cache_keys)
+        tournament_label = f"Turnering {tournament_id}"
+        if clubno is not None:
+            tournament_label += f" (club {int(clubno)})"
         
         lock_period_hours = self.manifest.get("lock_period_hours", 48)
         lock_period_days = lock_period_hours / 24
         
         # REGEL 1: Force refresh
         if force_refresh:
-            print(f"    🔄 SCRAPE: Turnering {tournament_id} ({tournament_date}) - force refresh")
+            print(f"    🔄 SCRAPE: {tournament_label} ({tournament_date}) - force refresh")
             return True
         
         # REGEL 2: Bruger bad specifikt om det
         if user_requested_older:
-            print(f"    🔄 SCRAPE: Turnering {tournament_id} ({tournament_date}) - bruger bad om det")
+            print(f"    🔄 SCRAPE: {tournament_label} ({tournament_date}) - bruger bad om det")
             return True
         
         # REGEL 3: Inden for lock period (48 timer)
         if days_old <= lock_period_days:
             if is_in_cache:
-                print(f"    🔄 SCRAPE: Turnering {tournament_id} ({tournament_date}) - refresh (<{lock_period_hours}h, data kan ændres)")
+                print(f"    🔄 SCRAPE: {tournament_label} ({tournament_date}) - refresh (<{lock_period_hours}h, data kan ændres)")
             else:
-                print(f"    🔄 SCRAPE: Turnering {tournament_id} ({tournament_date}) - ny turnering (<{lock_period_hours}h)")
+                print(f"    🔄 SCRAPE: {tournament_label} ({tournament_date}) - ny turnering (<{lock_period_hours}h)")
             return True
         
         # REGEL 4 & 5: Over lock period
         if is_in_cache:
-            print(f"    ⊘ SKIP: Turnering {tournament_id} ({tournament_date}) - allerede i cache (>{lock_period_hours}h, data låst)")
+            print(f"    ⊘ SKIP: {tournament_label} ({tournament_date}) - allerede i cache (>{lock_period_hours}h, data låst)")
             return False
         else:
-            print(f"    🔄 SCRAPE: Turnering {tournament_id} ({tournament_date}) - ny turnering bruger spørger om")
+            print(f"    🔄 SCRAPE: {tournament_label} ({tournament_date}) - ny turnering bruger spørger om")
             return True
     
     # ==================== HELPER: CONVERT DATES ====================
@@ -162,17 +192,35 @@ class DataCache:
     
     # ==================== CACHE OPERATIONS ====================
     
-    def tournament_exists(self, tournament_id: int) -> bool:
+    def tournament_exists(self, tournament_id: int, clubno: Optional[int] = None) -> bool:
         """Check if tournament data exists in cache"""
-        return str(tournament_id) in self.manifest["tournaments"]
+        keys = self._cache_keys_for_lookup(tournament_id, clubno=clubno)
+        return any(key in self.manifest["tournaments"] for key in keys)
     
-    def get_cached_tournament(self, tournament_id: int) -> Optional[Dict]:
+    def get_cached_tournament(self, tournament_id: int, clubno: Optional[int] = None) -> Optional[Dict]:
         """Hent cachet turnerings-data fra JSON"""
-        if not self.tournament_exists(tournament_id):
+        keys = self._cache_keys_for_lookup(tournament_id, clubno=clubno)
+        selected_key = None
+        for key in keys:
+            if key in self.manifest["tournaments"]:
+                selected_key = key
+                break
+
+        if selected_key is None:
             return None
-        
-        tournament_file = self.tournaments_dir / f"tournament_{tournament_id}.json"
-        if not tournament_file.exists():
+
+        file_candidates: List[Path] = [self._cache_file_from_key(selected_key)]
+        legacy_file = self._cache_file_from_key(self._cache_key(tournament_id, clubno=None))
+        if legacy_file not in file_candidates:
+            file_candidates.append(legacy_file)
+
+        tournament_file = None
+        for candidate in file_candidates:
+            if candidate.exists():
+                tournament_file = candidate
+                break
+
+        if tournament_file is None:
             return None
         
         try:
@@ -199,7 +247,7 @@ class DataCache:
             end = end_date
 
         out: List[Dict] = []
-        for tid_txt, tdata in self.manifest.get("tournaments", {}).items():
+        for cache_key, tdata in self.manifest.get("tournaments", {}).items():
             date_txt = tdata.get("date")
             if not isinstance(date_txt, str):
                 continue
@@ -217,15 +265,42 @@ class DataCache:
                 if isinstance(s, str) and s.strip()
             ]
 
+            tid = tdata.get("tournament_id")
             try:
-                tid = int(tid_txt)
+                tid = int(tid)
             except (TypeError, ValueError):
-                continue
+                key_tail = str(cache_key).split(":")[-1]
+                try:
+                    tid = int(key_tail)
+                except (TypeError, ValueError):
+                    continue
+
+            clubno = tdata.get("clubno")
+            try:
+                clubno = int(clubno) if clubno is not None else None
+            except (TypeError, ValueError):
+                clubno = None
+
+            if clubno is None and ":" in str(cache_key):
+                key_head = str(cache_key).split(":", 1)[0]
+                try:
+                    clubno = int(key_head)
+                except (TypeError, ValueError):
+                    clubno = None
+
+            mainclubno = tdata.get("mainclubno")
+            try:
+                mainclubno = int(mainclubno) if mainclubno is not None else None
+            except (TypeError, ValueError):
+                mainclubno = None
 
             out.append({
                 "tournament_id": tid,
                 "date": tdate,
                 "sections": [{"name": s} for s in section_names],
+                "clubno": clubno,
+                "mainclubno": mainclubno,
+                "cache_key": str(cache_key),
             })
 
         out.sort(key=lambda x: x.get("date", datetime.min), reverse=True)
@@ -236,15 +311,19 @@ class DataCache:
         tournament_id: int,
         tournament_date: datetime,
         sections: List[Dict],
-        data: Dict
+        data: Dict,
+        clubno: Optional[int] = None,
+        mainclubno: Optional[int] = None,
     ):
         """Gem turneringsd-data til JSON og opdater manifest"""
         
         # Konverter alle datetime/date objekter til strings i data
         data_to_save = self._convert_dates_to_strings(data)
+
+        cache_key = self._cache_key(tournament_id, clubno=clubno)
         
         # Gem turnerings-data
-        tournament_file = self.tournaments_dir / f"tournament_{tournament_id}.json"
+        tournament_file = self._cache_file_from_key(cache_key)
         with open(tournament_file, 'w', encoding='utf-8') as f:
             json.dump(data_to_save, f, indent=2, ensure_ascii=False)
         
@@ -252,8 +331,11 @@ class DataCache:
         if isinstance(tournament_date, datetime):
             tournament_date = tournament_date.date()
         
-        self.manifest["tournaments"][str(tournament_id)] = {
+        self.manifest["tournaments"][cache_key] = {
+            "cache_key": cache_key,
             "tournament_id": tournament_id,
+            "clubno": int(clubno) if clubno is not None else None,
+            "mainclubno": int(mainclubno) if mainclubno is not None else None,
             "date": str(tournament_date),
             "days_old": (datetime.now().date() - tournament_date).days,
             "cached_at": datetime.now().isoformat(),
@@ -266,7 +348,7 @@ class DataCache:
         self.manifest["last_sync"] = datetime.now().isoformat()
         self._save_manifest()
         
-        print(f"    Gemt i cache: tournament_{tournament_id}.json")
+        print(f"    Gemt i cache: {tournament_file.name}")
     
     # ==================== BACKUP OPERATIONS ====================
     

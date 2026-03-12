@@ -5,7 +5,13 @@ from datetime import datetime
 import re
 
 BASE = "https://resultater.bridge.dk/template/"
-OVERVIEW = BASE + "overview_club.php?mainclubno=2183&clubno=2"
+DEFAULT_MAINCLUBNO = 2183
+DEFAULT_CLUBNO = 2
+
+
+def build_overview_url(mainclubno: int = DEFAULT_MAINCLUBNO, clubno: int = DEFAULT_CLUBNO) -> str:
+    """Build overview URL for a specific main-club/club stream."""
+    return BASE + f"overview_club.php?mainclubno={int(mainclubno)}&clubno={int(clubno)}"
 
 def clean(text):
     if not text:
@@ -106,7 +112,7 @@ def build_spilresultater_url(section_url):
         url += '&round=1&half=1'
     return url
 
-def get_recent_tournaments(cutoff_date):
+def get_recent_tournaments(cutoff_date, mainclubno: int = DEFAULT_MAINCLUBNO, clubno: int = DEFAULT_CLUBNO):
     """
     Hent turneringer fra overview-siden.
 
@@ -131,7 +137,8 @@ def get_recent_tournaments(cutoff_date):
     if isinstance(cutoff_date, datetime):
         cutoff_date = cutoff_date.date()
 
-    soup = get_soup(OVERVIEW)
+    overview_url = build_overview_url(mainclubno=mainclubno, clubno=clubno)
+    soup = get_soup(overview_url)
 
     tournament_pages = [
         urljoin(BASE, a["href"])
@@ -158,11 +165,11 @@ def get_recent_tournaments(cutoff_date):
 
             # Find alle XML-links på turnerings-siden
             for a in tsoup.find_all("a", href=True):
-                if "resultater.php?filename=2183/" in a["href"]:
+                if f"resultater.php?filename={int(mainclubno)}/" in a["href"]:
                     res_url = urljoin(BASE, a["href"])
 
                     # Extrahér filnavn
-                    m = re.search(r'filename=2183/([^&]+)', res_url)
+                    m = re.search(rf'filename={int(mainclubno)}/([^&]+)', res_url)
                     if not m:
                         continue
 
@@ -231,7 +238,9 @@ def get_recent_tournaments(cutoff_date):
         result.append({
             'tournament_id': tournament_id,
             'date': date,
-            'sections': sections
+            'sections': sections,
+            'clubno': int(clubno),
+            'mainclubno': int(mainclubno),
         })
 
     if not reached_cutoff and tournaments:
