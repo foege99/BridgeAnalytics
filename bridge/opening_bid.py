@@ -542,6 +542,56 @@ def _is_two_over_one_gf_enabled_for_seat(seat: str) -> bool:
     return _profile_bool_flag(profile_cfg, "two_over_one_game_force", False)
 
 
+def _competitive_bidding_for_seat(seat: str) -> dict[str, Any]:
+    sys_def = _system_def_for_seat(seat)
+    out = (sys_def.get("competitive_bidding", {}) or {}) if isinstance(sys_def, Mapping) else {}
+    return out if isinstance(out, Mapping) else {}
+
+
+def _takeout_double_min_hcp_for_seat(seat: str) -> int:
+    comp = _competitive_bidding_for_seat(seat)
+    tko = (comp.get("takeout_double", {}) or {}) if isinstance(comp, Mapping) else {}
+    minimum = (tko.get("minimum_strength", {}) or {}) if isinstance(tko, Mapping) else {}
+    try:
+        return int(minimum.get("hcp_min", 12))
+    except Exception:
+        return 12
+
+
+def _negative_double_params_for_seat(seat: str) -> dict[str, Any]:
+    comp = _competitive_bidding_for_seat(seat)
+    neg = (comp.get("negative_double_system", {}) or {}) if isinstance(comp, Mapping) else {}
+
+    enabled = _bool_or_default(neg.get("enabled"), True)
+    minimum = (neg.get("minimum_strength", {}) or {}) if isinstance(neg, Mapping) else {}
+    applies = (neg.get("applies_up_to", {}) or {}) if isinstance(neg, Mapping) else {}
+
+    try:
+        hcp_min = int(minimum.get("hcp_min", 6))
+    except Exception:
+        hcp_min = 6
+
+    lvl_txt = str(applies.get("level") or "2S")
+    lvl_parsed = _parse_contract_bid(lvl_txt)
+    max_level = int(lvl_parsed[0]) if lvl_parsed is not None else 2
+
+    return {
+        "enabled": enabled,
+        "hcp_min": hcp_min,
+        "max_level": max_level,
+    }
+
+
+def _is_lead_directing_double_enabled_for_seat(seat: str) -> bool:
+    comp = _competitive_bidding_for_seat(seat)
+    ldd = (comp.get("lead_directing_double_system", {}) or {}) if isinstance(comp, Mapping) else {}
+    by_profile = _bool_or_default(ldd.get("enabled_by_profile_flag"), True)
+    if by_profile:
+        _, profile_cfg = _profile_for_seat(seat)
+        return _profile_bool_flag(profile_cfg, "lead_directing_doubles", True)
+    return _bool_or_default(ldd.get("enabled"), True)
+
+
 def _system_def_for_seat(seat: str) -> dict[str, Any]:
     bundle = _load_bundle()
     _, profile_cfg = _pick_profile(seat, bundle)
@@ -906,6 +956,154 @@ def _parse_contract_bid(bid: str | None) -> tuple[int, str] | None:
     return int(m.group(1)), m.group(2)
 
 
+def _latest_call_by_side(
+    prior_calls: list[Mapping[str, Any]],
+    side: str,
+) -> Mapping[str, Any] | None:
+    for c in reversed(prior_calls):
+        c_seat = _normalize_seat(c.get("dealer"))
+        if c_seat is None or _seat_side(c_seat) != side:
+            continue
+        return c
+    return None
+
+
+def _latest_contract_call_by_side(
+    prior_calls: list[Mapping[str, Any]],
+    side: str,
+) -> Mapping[str, Any] | None:
+    for c in reversed(prior_calls):
+        c_seat = _normalize_seat(c.get("dealer"))
+        if c_seat is None or _seat_side(c_seat) != side:
+            continue
+        bid = str(c.get("bid") or "PASS").upper()
+        if _parse_contract_bid(bid) is None:
+            continue
+        return c
+    return None
+
+
+def _is_artificial_rule_id(rule_id: str) -> bool:
+    rid = str(rule_id or "").strip().lower()
+    if not rid:
+        return False
+    markers = (
+        "stayman",
+        "transfer",
+        "relay",
+        "michaels",
+        "cue_raise",
+        "fourth_suit",
+        "artificial",
+        "jordan",
+    )
+    return any(tok in rid for tok in markers)
+
+
+def _is_artificial_call(call: Mapping[str, Any] | None) -> bool:
+    if not isinstance(call, Mapping):
+        return False
+    if _bool_or_default(call.get("artificial"), False):
+        return True
+    if _is_artificial_rule_id(str(call.get("rule_id") or "")):
+        return True
+    expl = str(call.get("explanation") or "").lower()
+    return ("kunstig" in expl) or ("artificial" in expl)
+
+
+def _double_context_for_seat(
+    prior_calls: list[Mapping[str, Any]],
+    seat: str,
+) -> dict[str, Any]:
+    side = _seat_side(seat)
+    opp_side = "ØV" if side == "NS" else "NS"
+    partner = _partner_of(seat)
+
+    latest_opp_call = _latest_call_by_side(prior_calls, opp_side)
+    latest_opp_contract = _latest_contract_call_by_side(prior_calls, opp_side)
+
+    partner_calls = []
+    for c in prior_calls:
+        c_seat = _normalize_seat(c.get("dealer"))
+        if c_seat == partner:
+            partner_calls.append(c)
+
+    partner_has_contract = False
+    for c in partner_calls:
+        bid = str(c.get("bid") or "PASS").upper()
+        if _parse_contract_bid(bid) is not None:
+            partner_has_contract = True
+            break
+
+    partner_only_pass_or_unbid = (not partner_calls) or all(
+        _is_pass_bid(c.get("bid")) for c in partner_calls
+    )
+
+    if latest_opp_contract is None:
+        return {
+            "double_type": "none",
+            "context_note": "Ingen modpartskontrakt at doble.",
+            "partner_has_contract": partner_has_contract,
+            "partner_only_pass_or_unbid": partner_only_pass_or_unbid,
+            "latest_opp_call": latest_opp_call,
+            "latest_opp_contract_bid": None,
+            "latest_opp_contract_level": None,
+            "latest_opp_contract_strain": None,
+        }
+
+    latest_bid = str(latest_opp_contract.get("bid") or "PASS").upper()
+    latest_parsed = _parse_contract_bid(latest_bid)
+    latest_level = latest_parsed[0] if latest_parsed is not None else None
+    latest_strain = latest_parsed[1] if latest_parsed is not None else None
+
+    if _is_artificial_call(latest_opp_call) and latest_strain in ("S", "H", "D", "C"):
+        return {
+            "double_type": "lead_directing",
+            "context_note": "Sidste modpartsmelding er kunstig farvemelding; dobling tolkes udspilsdirigerende.",
+            "partner_has_contract": partner_has_contract,
+            "partner_only_pass_or_unbid": partner_only_pass_or_unbid,
+            "latest_opp_call": latest_opp_call,
+            "latest_opp_contract_bid": latest_bid,
+            "latest_opp_contract_level": latest_level,
+            "latest_opp_contract_strain": latest_strain,
+        }
+
+    if partner_only_pass_or_unbid:
+        return {
+            "double_type": "takeout",
+            "context_note": "Makker er umeldt/kun PAS; dobling tolkes som oplysningsdobling.",
+            "partner_has_contract": partner_has_contract,
+            "partner_only_pass_or_unbid": partner_only_pass_or_unbid,
+            "latest_opp_call": latest_opp_call,
+            "latest_opp_contract_bid": latest_bid,
+            "latest_opp_contract_level": latest_level,
+            "latest_opp_contract_strain": latest_strain,
+        }
+
+    if partner_has_contract:
+        return {
+            "double_type": "negative",
+            "context_note": "Makker har allerede meldt kontrakt; dobling tolkes som negativ dobling.",
+            "partner_has_contract": partner_has_contract,
+            "partner_only_pass_or_unbid": partner_only_pass_or_unbid,
+            "latest_opp_call": latest_opp_call,
+            "latest_opp_contract_bid": latest_bid,
+            "latest_opp_contract_level": latest_level,
+            "latest_opp_contract_strain": latest_strain,
+        }
+
+    return {
+        "double_type": "penalty",
+        "context_note": "Ingen direkte takeout/negative/udspilsdirigerende trigger; dobling tolkes som straf.",
+        "partner_has_contract": partner_has_contract,
+        "partner_only_pass_or_unbid": partner_only_pass_or_unbid,
+        "latest_opp_call": latest_opp_call,
+        "latest_opp_contract_bid": latest_bid,
+        "latest_opp_contract_level": latest_level,
+        "latest_opp_contract_strain": latest_strain,
+    }
+
+
 def _strain_order(strain: str) -> int:
     order = {"C": 1, "D": 2, "H": 3, "S": 4, "NT": 5}
     return order.get(str(strain).upper(), 0)
@@ -951,6 +1149,7 @@ def _suggest_second_hand_competitive(
     second_seat: str,
     first_bid: str,
     hand_tag: str = "2H",
+    prior_calls: list[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     hand_col = f"{second_seat}_hand"
     hand_dot = row.get(hand_col)
@@ -992,35 +1191,95 @@ def _suggest_second_hand_competitive(
         }
 
     first_level, first_strain = parsed_first
-
-    # --- Takeout double (basic MVP) ---
-    double_ok = False
-    double_reason = f"{hand_tag} oplysningsdobling: afvist."
-    if first_strain in ("C", "D", "H", "S") and int(ctx["hcp"]) >= 12:
-        opener_len = int(ctx["clubs"] if first_strain == "C" else ctx["diamonds"] if first_strain == "D" else ctx["hearts"] if first_strain == "H" else ctx["spades"])
-        if first_strain in ("C", "D"):
-            majors_ok = int(ctx["hearts"]) >= 3 and int(ctx["spades"]) >= 3
-            if opener_len <= 2 and majors_ok:
-                double_ok = True
-                double_reason = f"{hand_tag} oplysningsdobling: OK (kort i minor + begge majorer)."
-            else:
-                double_reason = f"{hand_tag} oplysningsdobling: afvist (kræver kort minor + majorstøtte)."
-        else:
-            other_major_len = int(ctx["hearts"] if first_strain == "S" else ctx["spades"])
-            if opener_len <= 2 and other_major_len >= 4:
-                double_ok = True
-                double_reason = f"{hand_tag} oplysningsdobling: OK (kort i åbners major + 4+ i anden major)."
-            else:
-                double_reason = f"{hand_tag} oplysningsdobling: afvist (kræver kort åbners major + 4+ i anden major)."
-    log_lines.append(double_reason)
-
-    # --- Natural overcall (basic MVP) ---
     suit_lens = {
         "S": int(ctx["spades"]),
         "H": int(ctx["hearts"]),
         "D": int(ctx["diamonds"]),
         "C": int(ctx["clubs"]),
     }
+
+    double_ctx = _double_context_for_seat(list(prior_calls or []), second_seat)
+    double_type = str(double_ctx.get("double_type") or "takeout")
+    log_lines.append(f"{hand_tag} dobbeltype: {double_type} ({double_ctx.get('context_note') or 'ingen note'}).")
+
+    double_ok = False
+    double_reason = f"{hand_tag} dobling: afvist."
+    double_rule_id = "takeout_double_basic"
+    double_explanation = "Hånden vælger oplysningsdobling i denne kontekst."
+
+    if double_type == "lead_directing":
+        lead_enabled = _is_lead_directing_double_enabled_for_seat(second_seat)
+        if lead_enabled and first_strain in ("S", "H", "D", "C") and int(ctx["hcp"]) >= 8:
+            double_ok = True
+            double_rule_id = "lead_directing_double_basic"
+            double_explanation = "Hånden vælger udspilsdirigerende dobling mod kunstig modpartsmelding."
+            double_reason = f"{hand_tag} udspilsdirigerende dobling: OK (kunstig modpartsmelding i {_to_display_bid(first_bid)})."
+        else:
+            double_reason = f"{hand_tag} udspilsdirigerende dobling: afvist (kræver aktiv aftale, farvemelding og tilstrækkelige værdier)."
+
+    elif double_type == "negative":
+        neg = _negative_double_params_for_seat(second_seat)
+        unbid = [s for s in ("S", "H", "D", "C") if s != first_strain]
+        has_four_unbid = any(suit_lens[s] >= 4 for s in unbid)
+        majors_over_minor = first_strain in ("C", "D") and suit_lens["S"] >= 4 and suit_lens["H"] >= 4
+        shape_ok = majors_over_minor or has_four_unbid
+        if (
+            bool(neg.get("enabled", True))
+            and int(ctx["hcp"]) >= int(neg.get("hcp_min", 6))
+            and int(first_level) <= int(neg.get("max_level", 2))
+            and shape_ok
+        ):
+            double_ok = True
+            double_rule_id = "negative_double_basic"
+            double_explanation = "Hånden vælger negativ dobling efter makkers kontraktmelding."
+            double_reason = f"{hand_tag} negativ dobling: OK (HCP {int(ctx['hcp'])}, umeldte farver vises)."
+        else:
+            double_reason = f"{hand_tag} negativ dobling: afvist (niveau/styrke/fordeling opfylder ikke krav)."
+
+    elif double_type == "penalty":
+        opener_len = int(
+            ctx["clubs"] if first_strain == "C"
+            else ctx["diamonds"] if first_strain == "D"
+            else ctx["hearts"] if first_strain == "H"
+            else ctx["spades"] if first_strain == "S"
+            else 0
+        )
+        if first_strain in ("C", "D", "H", "S") and int(ctx["hcp"]) >= 10 and opener_len >= 4:
+            double_ok = True
+            double_rule_id = "penalty_double_basic"
+            double_explanation = "Hånden vælger strafdobling i fravær af takeout/negative/udspilsdirigerende trigger."
+            double_reason = f"{hand_tag} strafdobling: OK (styrke + længde i modpartens farve)."
+        else:
+            double_reason = f"{hand_tag} strafdobling: afvist (kræver styrke og længde i modpartens farve)."
+
+    else:
+        takeout_min_hcp = _takeout_double_min_hcp_for_seat(second_seat)
+        opener_len = int(
+            ctx["clubs"] if first_strain == "C"
+            else ctx["diamonds"] if first_strain == "D"
+            else ctx["hearts"] if first_strain == "H"
+            else ctx["spades"]
+        )
+        if first_strain in ("C", "D", "H", "S") and int(ctx["hcp"]) >= int(takeout_min_hcp):
+            if first_strain in ("C", "D"):
+                majors_ok = int(ctx["hearts"]) >= 3 and int(ctx["spades"]) >= 3
+                if opener_len <= 2 and majors_ok:
+                    double_ok = True
+                    double_reason = f"{hand_tag} oplysningsdobling: OK (kort i minor + begge majorer)."
+                else:
+                    double_reason = f"{hand_tag} oplysningsdobling: afvist (kræver kort minor + majorstøtte)."
+            else:
+                other_major_len = int(ctx["hearts"] if first_strain == "S" else ctx["spades"])
+                if opener_len <= 2 and other_major_len >= 4:
+                    double_ok = True
+                    double_reason = f"{hand_tag} oplysningsdobling: OK (kort i åbners major + 4+ i anden major)."
+                else:
+                    double_reason = f"{hand_tag} oplysningsdobling: afvist (kræver kort åbners major + 4+ i anden major)."
+        else:
+            double_reason = f"{hand_tag} oplysningsdobling: afvist (HCP under minimum {takeout_min_hcp})."
+
+    log_lines.append(double_reason)
+
     candidate_suits = sorted(
         [s for s in ("S", "H", "D", "C") if s != first_strain],
         key=lambda s: (suit_lens[s], _strain_order(s)),
@@ -1041,29 +1300,30 @@ def _suggest_second_hand_competitive(
             overcall_rule = "natural_overcall_basic"
             overcall_line = (
                 f"{hand_tag} indmelding: OK med {_to_display_bid(cand)} "
-                f"(5+ farve, HCP {int(ctx['hcp'])}, højere end 1H)."
+                f"(5+ farve, HCP {int(ctx['hcp'])}, højere end {_to_display_bid(first_bid)})."
             )
             break
     else:
         overcall_line = f"{hand_tag} indmelding: afvist (HCP {int(ctx['hcp'])} < 8)."
     log_lines.append(overcall_line)
 
-    # Priority: double with classic shape, otherwise natural overcall, else pass.
+    # Priority: lead-directing doubles are explicit; otherwise allow strong long-suit overcalls to win.
     prefer_overcall = overcall_bid is not None and (
         max(suit_lens.values()) >= 6 and int(ctx["hcp"]) >= 10
     )
+    force_double = double_type == "lead_directing"
 
-    if double_ok and not prefer_overcall:
+    if double_ok and (force_double or not prefer_overcall):
         return {
             "dealer": second_seat,
             "profile": None,
             "bid": "X",
             "display_bid": "X",
-            "rule_id": "takeout_double_basic",
-            "explanation": "2. hånd vælger oplysningsdobling.",
+            "rule_id": double_rule_id,
+            "explanation": double_explanation,
             "log_lines": log_lines + [
                 f"{hand_tag} valg: X",
-                f"{hand_tag} regel-id: takeout_double_basic",
+                f"{hand_tag} regel-id: {double_rule_id}",
             ],
         }
 
@@ -1167,6 +1427,12 @@ def _suggest_third_hand_after_partner_open(
     two_over_one_enabled = _is_two_over_one_gf_enabled_for_seat(third_seat)
     side_has_2o1_dhs = _side_has_two_over_one_dhs(side_history)
     opp_has_contract = _parse_contract_bid(second_call_bid) is not None
+    double_ctx = _double_context_for_seat(list(prior_calls or []), third_seat)
+    if opp_has_contract:
+        log_lines.append(
+            f"{hand_tag} dobbeltype: {double_ctx.get('double_type') or 'none'} "
+            f"({double_ctx.get('context_note') or 'ingen note'})."
+        )
 
     side_opening = side_history[0] if side_history else None
     side_response = side_history[1] if len(side_history) >= 2 else None
@@ -1443,6 +1709,98 @@ def _suggest_third_hand_after_partner_open(
                     ],
                 }
 
+    if opp_has_contract:
+        dbl_type = str(double_ctx.get("double_type") or "none")
+        opp_level = int(double_ctx.get("latest_opp_contract_level") or 0)
+        opp_strain = str(double_ctx.get("latest_opp_contract_strain") or "")
+
+        if dbl_type == "lead_directing":
+            if (
+                _is_lead_directing_double_enabled_for_seat(third_seat)
+                and opp_strain in ("S", "H", "D", "C")
+                and int(ctx["hcp"]) >= 8
+            ):
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": "X",
+                    "display_bid": "X",
+                    "rule_id": "lead_directing_double_basic",
+                    "explanation": "Dobling af kunstig modpartsmelding er udspilsdirigerende.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} udspilsdirigerende dobling: OK mod kunstig {_to_display_bid(double_ctx.get('latest_opp_contract_bid') or '')}.",
+                        f"{hand_tag} valg: X",
+                        f"{hand_tag} regel-id: lead_directing_double_basic",
+                    ],
+                }
+
+        elif dbl_type == "negative":
+            neg = _negative_double_params_for_seat(third_seat)
+            two_majors_over_minor = opp_strain in ("C", "D") and suit_lens["H"] >= 4 and suit_lens["S"] >= 4
+            other_major_over_major = (opp_strain == "H" and suit_lens["S"] >= 4) or (opp_strain == "S" and suit_lens["H"] >= 4)
+            minors_over_major = opp_strain in ("H", "S") and suit_lens["C"] >= 4 and suit_lens["D"] >= 4
+            shape_ok = two_majors_over_minor or other_major_over_major or minors_over_major
+            partner_len_now = int(
+                ctx["spades"] if partner_strain == "S"
+                else ctx["hearts"] if partner_strain == "H"
+                else ctx["diamonds"] if partner_strain == "D"
+                else ctx["clubs"]
+            )
+            support_call_available = (
+                partner_len_now >= 3
+                and _lowest_higher_bid_for_strain(highest_contract, partner_strain) is not None
+            )
+            natural_new_call_available = False
+            for s in ("S", "H", "D", "C"):
+                if s == partner_strain or s in reserved:
+                    continue
+                if suit_lens[s] < 4:
+                    continue
+                if _lowest_higher_bid_for_strain(highest_contract, s) is None:
+                    continue
+                natural_new_call_available = True
+                break
+
+            prefer_negative = two_majors_over_minor or (
+                shape_ok and (not support_call_available) and (not natural_new_call_available)
+            )
+            if (
+                bool(neg.get("enabled", True))
+                and opp_level <= int(neg.get("max_level", 2))
+                and int(ctx["hcp"]) >= int(neg.get("hcp_min", 6))
+                and prefer_negative
+            ):
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": "X",
+                    "display_bid": "X",
+                    "rule_id": "negative_double_basic",
+                    "explanation": "Dobling i denne position tolkes som negativ dobling.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} negativ dobling: OK (niveau <= {int(neg.get('max_level', 2))}, HCP >= {int(neg.get('hcp_min', 6))}).",
+                        f"{hand_tag} valg: X",
+                        f"{hand_tag} regel-id: negative_double_basic",
+                    ],
+                }
+
+        elif dbl_type == "penalty":
+            opp_len = int(suit_lens.get(opp_strain, 0))
+            if opp_strain in ("S", "H", "D", "C") and int(ctx["hcp"]) >= 10 and opp_len >= 5:
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": "X",
+                    "display_bid": "X",
+                    "rule_id": "penalty_double_basic",
+                    "explanation": "Dobling bruges som strafdobling i denne kontekst.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} strafdobling: OK (længde i modpartens farve + styrke).",
+                        f"{hand_tag} valg: X",
+                        f"{hand_tag} regel-id: penalty_double_basic",
+                    ],
+                }
+
     # 3H when partner opened NT: simple invite/game or pass.
     if partner_strain == "NT":
         if int(ctx["hcp"]) >= 10:
@@ -1669,8 +2027,17 @@ def _infer_public_bid_evidence(state: Any, seat: str, bid: str) -> BidEvidence:
         return evidence
 
     if btxt in ("X", "DBL", "DOUBLE"):
-        evidence.hcp_range = ValueRange(10.0, 18.0)
-        evidence.notes.append("Dobling tolkes som konkurrencestyrke i denne MVP-model.")
+        if latest_side_contract is not None:
+            evidence.hcp_range = ValueRange(6.0, 15.0)
+            evidence.notes.append("Dobling efter makkers kontrakt tolkes som negativ dobling.")
+        else:
+            high = _parse_contract_bid(state.highest_contract)
+            if high is not None and high[1] in ("S", "H", "D", "C"):
+                evidence.hcp_range = ValueRange(11.0, 19.0)
+                evidence.notes.append("Dobling uden makkerkontrakt tolkes som takeout/konkurrencestyrke.")
+            else:
+                evidence.hcp_range = ValueRange(10.0, 18.0)
+                evidence.notes.append("Dobling tolkes som konkurrencestyrke i denne MVP-model.")
         return evidence
 
     if parsed is None:
@@ -1988,6 +2355,7 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
             seat,
             highest_contract,
             hand_tag=hand_tag,
+            prior_calls=call_sequence,
         )
         call = _legalize_competitive_contract(call, highest_contract, hand_tag)
         call = _apply_state_ceiling_to_call(row, call_sequence, seat, call, hand_tag)

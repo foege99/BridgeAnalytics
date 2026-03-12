@@ -1343,6 +1343,16 @@ system_library:
 
     competitive_bidding:
 
+      doubles_interpretation_priority:
+        description: >
+          Priority for interpreting doubles in competitive auctions.
+          Applies in all seats when a double is available.
+        order:
+          - lead_directing_after_artificial_opponent_call
+          - takeout_when_partner_unbid_or_only_passed
+          - negative_when_partner_has_contract_bid
+          - penalty_as_fallback
+
       overcalls:
 
         one_level_overcall:

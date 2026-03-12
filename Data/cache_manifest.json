@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_sync": "2026-03-12T18:39:11.011276",
+  "last_sync": "2026-03-12T18:43:16.063471",
   "default_cutoff_days": 7,
   "lock_period_hours": 48,
   "tournaments": {
@@ -137,7 +137,7 @@
       "mainclubno": 2183,
       "date": "2026-03-10",
       "days_old": 2,
-      "cached_at": "2026-03-12T18:39:01.257241",
+      "cached_at": "2026-03-12T18:43:01.887915",
       "sections": [
         "A",
         "B",
@@ -154,7 +154,7 @@
       "mainclubno": 2183,
       "date": "2026-03-10",
       "days_old": 2,
-      "cached_at": "2026-03-12T18:39:06.177771",
+      "cached_at": "2026-03-12T18:43:12.110797",
       "sections": [
         "A",
         "B",
@@ -171,7 +171,7 @@
       "mainclubno": 2183,
       "date": "2026-03-10",
       "days_old": 2,
-      "cached_at": "2026-03-12T18:39:11.011276",
+      "cached_at": "2026-03-12T18:43:16.063471",
       "sections": [
         "A",
         "B",

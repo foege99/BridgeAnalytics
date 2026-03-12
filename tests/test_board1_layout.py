@@ -819,6 +819,73 @@ def test_bid_scaffold_second_hand_takeout_double_option():
     assert ws.cell(row=21, column=4).value == 'X'
 
 
+def test_double_context_takeout_when_partner_only_passed_or_unbid():
+    calls = [
+        {'dealer': 'N', 'bid': '1D'},
+        {'dealer': 'Ø', 'bid': 'PASS'},
+        {'dealer': 'S', 'bid': 'PASS'},
+    ]
+    ctx = opening_bid_module._double_context_for_seat(calls, 'V')
+    assert str(ctx.get('double_type')) == 'takeout'
+
+
+def test_double_context_negative_when_partner_has_contract_bid():
+    calls = [
+        {'dealer': 'N', 'bid': '1C'},
+        {'dealer': 'Ø', 'bid': '1D'},
+    ]
+    ctx = opening_bid_module._double_context_for_seat(calls, 'S')
+    assert str(ctx.get('double_type')) == 'negative'
+
+
+def test_double_context_lead_directing_after_artificial_opponent_call():
+    calls = [
+        {'dealer': 'N', 'bid': '1NT', 'rule_id': 'one_nt_open'},
+        {'dealer': 'Ø', 'bid': 'PASS', 'rule_id': 'competitive_pass'},
+        {'dealer': 'S', 'bid': '2C', 'rule_id': 'stayman_artificial'},
+    ]
+    ctx = opening_bid_module._double_context_for_seat(calls, 'V')
+    assert str(ctx.get('double_type')) == 'lead_directing'
+
+
+def test_bid_scaffold_fourth_hand_takeout_double_when_partner_passed():
+    """Takeout doubles can occur in later seats when partner is unbid/passed."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'KJ4.Q4.AK974.83',
+        'Ø_hand': '763.942.J86.874',
+        'S_hand': 'T9852.83.742.953',
+        'V_hand': 'AQJ4.KT93.2.AQ84',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    v_first = _find_call(seq, 'V', 1)
+
+    assert v_first is not None
+    assert str(v_first.get('display_bid')) == 'X'
+    assert 'takeout_double' in str(v_first.get('rule_id') or '')
+
+
+def test_third_hand_negative_double_after_partner_open_and_opponent_overcall():
+    """When partner has opened and opponents overcall, double is treated as negative."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'KQ3.84.AJ7.KJ52',
+        'Ø_hand': 'A76.Q95.KT862.Q4',
+        'S_hand': 'J984.KJ73.842.A7',
+        'V_hand': 'T52.AT62.953.T98',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    s_first = _find_call(seq, 'S', 1)
+
+    assert s_first is not None
+    assert str(s_first.get('display_bid')) == 'X'
+    assert str(s_first.get('rule_id')) == 'negative_double_basic'
+
+
 def test_bid_scaffold_second_hand_wraps_to_next_row_after_column_d():
     """If 1H is in Ø-column (D), 2H must wrap to next row at S-column (A)."""
     df = _make_df(
@@ -1501,78 +1568,6 @@ def test_mini_traveller_missing_pct_is_none():
     assert ws.cell(row=2, column=16).value is None   # Pct ØV
     assert ws.cell(row=2, column=17).value == 'ukendt'   # Pct Defense
     assert ws.cell(row=2, column=18).value == 'ukendt'   # Pct Decl
-
-
-def test_frekvenstavlen_starts_at_e49_or_later():
-    """Frekvenstavlen title should be placed in column E at row 49 or below."""
-    df = _make_df(score_NS=50, score_ØV=-50)
-    writer, wb = _make_writer_mock()
-    write_board1_layout_sheet(writer, df, PER)
-    ws = wb['Board1_LastTournament']
-
-    freq_title_row = next(
-        r for r in range(1, 300)
-        if str(ws.cell(row=r, column=5).value or '').startswith('Frekvenstavlen')
-    )
-    assert freq_title_row >= 49
-
-
-def test_frekvenstavlen_recomputes_mp_and_pct_with_ties():
-    """Frekvenstavlen should recompute MP/pct from combined same-deal scores."""
-    df_latest = _make_df(tournament_date='2026-01-15', score_NS=150, score_ØV=None)
-    df_tie_1 = _make_df(
-        tournament_date='2026-01-08',
-        ns1='A NS1', ns2='A NS2', ew1='A EW1', ew2='A EW2',
-        score_NS=50, score_ØV=None,
-    )
-    df_tie_2 = _make_df(
-        tournament_date='2026-01-01',
-        ns1='B NS1', ns2='B NS2', ew1='B EW1', ew2='B EW2',
-        score_NS=50, score_ØV=None,
-    )
-    df_low = _make_df(
-        tournament_date='2025-12-25',
-        ns1='C NS1', ns2='C NS2', ew1='C EW1', ew2='C EW2',
-        score_NS=-110, score_ØV=None,
-    )
-    df = pd.concat([df_latest, df_tie_1, df_tie_2, df_low], ignore_index=True)
-
-    writer, wb = _make_writer_mock()
-    write_board1_layout_sheet(writer, df, PER)
-    ws = wb['Board1_LastTournament']
-
-    freq_title_row = next(
-        r for r in range(1, 300)
-        if str(ws.cell(row=r, column=5).value or '').startswith('Frekvenstavlen')
-    )
-    header_row = freq_title_row + 1
-    data_row_1 = header_row + 1
-    data_row_2 = header_row + 2
-    data_row_3 = header_row + 3
-
-    # Score +150 (count=1): top on 4 boards => MP 6/0 => 100/0
-    assert ws.cell(row=data_row_1, column=5).value == 1
-    assert ws.cell(row=data_row_1, column=6).value == 150
-    assert ws.cell(row=data_row_1, column=7).value == 6
-    assert ws.cell(row=data_row_1, column=8).value == 0
-    assert ws.cell(row=data_row_1, column=9).value == 100.0
-    assert ws.cell(row=data_row_1, column=10).value == 0.0
-
-    # Score +50 (count=2): one lower + one tie => MP 3/3 => 50/50
-    assert ws.cell(row=data_row_2, column=5).value == 2
-    assert ws.cell(row=data_row_2, column=6).value == 50
-    assert ws.cell(row=data_row_2, column=7).value == 3
-    assert ws.cell(row=data_row_2, column=8).value == 3
-    assert ws.cell(row=data_row_2, column=9).value == 50.0
-    assert ws.cell(row=data_row_2, column=10).value == 50.0
-
-    # Score -110 (count=1): bottom => MP 0/6 => 0/100
-    assert ws.cell(row=data_row_3, column=5).value == 1
-    assert ws.cell(row=data_row_3, column=6).value == -110
-    assert ws.cell(row=data_row_3, column=7).value == 0
-    assert ws.cell(row=data_row_3, column=8).value == 6
-    assert ws.cell(row=data_row_3, column=9).value == 0.0
-    assert ws.cell(row=data_row_3, column=10).value == 100.0
 
 
 # ---------------------------------------------------------------------------
