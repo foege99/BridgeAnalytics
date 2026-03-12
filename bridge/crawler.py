@@ -7,6 +7,22 @@ import re
 BASE = "https://resultater.bridge.dk/template/"
 DEFAULT_MAINCLUBNO = 2183
 DEFAULT_CLUBNO = 2
+OVERVIEW_OLD_STREAK_FOR_EARLY_STOP = 3
+
+DANISH_MONTHS = {
+    "januar": 1,
+    "februar": 2,
+    "marts": 3,
+    "april": 4,
+    "maj": 5,
+    "juni": 6,
+    "juli": 7,
+    "august": 8,
+    "september": 9,
+    "oktober": 10,
+    "november": 11,
+    "december": 12,
+}
 
 
 def build_overview_url(mainclubno: int = DEFAULT_MAINCLUBNO, clubno: int = DEFAULT_CLUBNO) -> str:
@@ -71,6 +87,31 @@ def parse_date_from_title(title):
             return parsed
     
     return None
+
+
+def parse_date_from_overview_text(text):
+    """
+    Parse dato fra overview-linktekst.
+
+    Eksempel:
+    "Tirsdag d. 10. marts 2026 kl. 18:30"
+    """
+    t = clean(text).lower()
+    m = re.search(r"(\d{1,2})\.\s*([a-zæøå]+)\s+(\d{4})", t)
+    if not m:
+        return None
+
+    day = int(m.group(1))
+    month_name = m.group(2)
+    year = int(m.group(3))
+    month = DANISH_MONTHS.get(month_name)
+    if month is None:
+        return None
+
+    try:
+        return datetime(year, month, day)
+    except ValueError:
+        return None
     
 def extract_gt_number(filename):
     """
@@ -140,28 +181,63 @@ def get_recent_tournaments(cutoff_date, mainclubno: int = DEFAULT_MAINCLUBNO, cl
     overview_url = build_overview_url(mainclubno=mainclubno, clubno=clubno)
     soup = get_soup(overview_url)
 
-    tournament_pages = [
-        urljoin(BASE, a["href"])
+    tournament_entries = [
+        {
+            "url": urljoin(BASE, a["href"]),
+            "overview_date": parse_date_from_overview_text(a.get_text(" ", strip=True)),
+        }
         for a in soup.find_all("a", href=True)
         if "turnering.php?" in a["href"]
     ]
 
-    # ✅ STEP 1: Parse ALLE turneringer først (uden early stop)
+    # ✅ STEP 1: Brug overview-dato til at undgå parsing af gamle turneringer
     tournaments = {}  # Key: tournament_id, Value: {'date': ..., 'urls': []}
+    old_streak = 0
+    reached_cutoff_during_discovery = False
 
-    for turl in tournament_pages:
+    for entry in tournament_entries:
+        turl = entry["url"]
+        overview_date = entry["overview_date"]
+
+        if overview_date is not None:
+            if overview_date.date() < cutoff_date:
+                old_streak += 1
+                if old_streak >= OVERVIEW_OLD_STREAK_FOR_EARLY_STOP:
+                    print(
+                        f"✅ Early stop fra overview: {old_streak} gamle turneringer i træk "
+                        f"(< {cutoff_date})"
+                    )
+                    reached_cutoff_during_discovery = True
+                    break
+                continue
+
+            # Vi har fundet en turnering i range, så old streak nulstilles.
+            old_streak = 0
+
         print(f"  Parsing: {turl}")
         try:
             tsoup = get_soup(turl)
             h1 = tsoup.find("h1")
-            if not h1:
+            if not h1 and overview_date is None:
                 continue
 
-            date = parse_date_from_title(h1.get_text())
+            date = parse_date_from_title(h1.get_text()) if h1 else None
+            if date is None:
+                date = overview_date
             if not date:
                 continue
 
             print(f"    → {date.date()}")
+
+            if date.date() < cutoff_date:
+                old_streak += 1
+                if old_streak >= OVERVIEW_OLD_STREAK_FOR_EARLY_STOP:
+                    print(f"✅ Early stop: Nåede cutoff-dato ({cutoff_date})")
+                    reached_cutoff_during_discovery = True
+                    break
+                continue
+
+            old_streak = 0
 
             # Find alle XML-links på turnerings-siden
             for a in tsoup.find_all("a", href=True):
@@ -205,7 +281,7 @@ def get_recent_tournaments(cutoff_date, mainclubno: int = DEFAULT_MAINCLUBNO, cl
 
     # ✅ STEP 3: Filtrer efter cutoff (nu kan vi bruge early stop sikkert)
     result = []
-    reached_cutoff = False
+    reached_cutoff = reached_cutoff_during_discovery
 
     for tournament_id in sorted_tournament_ids:
         tdata = tournaments[tournament_id]

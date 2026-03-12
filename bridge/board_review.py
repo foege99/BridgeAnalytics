@@ -1095,6 +1095,140 @@ def write_board1_layout_sheet(
         if Font is not None:
             info_cell.font = Font(italic=True)
 
+    # ------------------------------------------------------------------
+    # 9. Frekvenstavlen (samlet, genberegnet MP/procent)
+    # ------------------------------------------------------------------
+    _FREQ_MIN_START_ROW = 49
+    _FREQ_START_COL = 5  # E
+    _FREQ_START_ROW = max(_FREQ_MIN_START_ROW, ws.max_row + 2)
+
+    def _hand_signature(row_obj) -> str | None:
+        n_hand = _get_field(row_obj, 'N_hand')
+        s_hand = _get_field(row_obj, 'S_hand')
+        o_hand = _get_field(row_obj, 'Ø_hand')
+        v_hand = _get_field(row_obj, 'V_hand')
+        parts = [n_hand, s_hand, o_hand, v_hand]
+        if any(p is None or (isinstance(p, float) and pd.isna(p)) for p in parts):
+            return None
+        out = [str(p).strip() for p in parts]
+        if any(not p for p in out):
+            return None
+        return '|'.join(out)
+
+    current_signature = _hand_signature(per_row)
+
+    if current_signature is not None:
+        work_freq = df.copy()
+        work_freq['_deal_sig'] = work_freq.apply(_hand_signature, axis=1)
+        work_freq = work_freq[work_freq['_deal_sig'] == current_signature].copy()
+    else:
+        work_freq = df_trav.copy()
+
+    if work_freq.empty:
+        work_freq = df_trav.copy()
+
+    freq_input_rows: list[dict] = []
+    for _, fr in work_freq.iterrows():
+        score_ns_out, score_ov_out = _mirrored_scores(fr)
+        score_ns_num = _to_number_or_none(score_ns_out)
+        score_ov_num = _to_number_or_none(score_ov_out)
+        freq_input_rows.append({
+            'score_ns_num': score_ns_num,
+            'score_ov_num': score_ov_num,
+        })
+
+    freq_df = pd.DataFrame(freq_input_rows)
+    played_df = freq_df[freq_df['score_ns_num'].notna()].copy()
+    is_count = int(len(freq_df) - len(played_df))
+
+    table_rows: list[dict] = []
+    if not played_df.empty:
+        played_df['score_ns_num'] = pd.to_numeric(played_df['score_ns_num'], errors='coerce')
+        played_df = played_df[played_df['score_ns_num'].notna()].copy()
+        played_df['score_ns_num'] = played_df['score_ns_num'].astype(float)
+
+        score_counts = (
+            played_df.groupby('score_ns_num', dropna=False)
+            .size()
+            .sort_index(ascending=True)
+        )
+
+        lower_counts_by_score: dict[float, int] = {}
+        lower_running = 0
+        for score_val, cnt in score_counts.items():
+            lower_counts_by_score[float(score_val)] = int(lower_running)
+            lower_running += int(cnt)
+
+        n_played = int(len(played_df))
+        top_score = max(2 * (n_played - 1), 0)
+
+        for score_val in sorted(score_counts.index.tolist(), reverse=True):
+            score_key = float(score_val)
+            cnt = int(score_counts.loc[score_val])
+            lower_cnt = int(lower_counts_by_score.get(score_key, 0))
+            mp_ns = int(2 * lower_cnt + (cnt - 1))
+            mp_ov = int(top_score - mp_ns)
+
+            if top_score > 0:
+                pct_ns = round((mp_ns / top_score) * 100.0, 2)
+                pct_ov = round((mp_ov / top_score) * 100.0, 2)
+            else:
+                pct_ns = 50.0
+                pct_ov = 50.0
+
+            score_out = int(score_key) if float(score_key).is_integer() else score_key
+            table_rows.append({
+                'count': cnt,
+                'score_ns': score_out,
+                'point_ns': mp_ns,
+                'point_ov': mp_ov,
+                'pct_ns': pct_ns,
+                'pct_ov': pct_ov,
+            })
+
+    if is_count > 0:
+        table_rows.append({
+            'count': is_count,
+            'score_ns': 'I/S',
+            'point_ns': '-',
+            'point_ov': '-',
+            'pct_ns': 50.0,
+            'pct_ov': 50.0,
+        })
+
+    freq_title = ws.cell(
+        row=_FREQ_START_ROW,
+        column=_FREQ_START_COL,
+        value='Frekvenstavlen (samlet, genberegnet MP/procent)',
+    )
+    _bold(freq_title)
+
+    _FREQ_HEADERS = ['Antal', 'Score NS', 'Point NS', 'Point ØV', 'Pct NS', 'Pct ØV']
+    _FREQ_HEADER_ROW = _FREQ_START_ROW + 1
+
+    for idx, hdr in enumerate(_FREQ_HEADERS):
+        hdr_cell = ws.cell(row=_FREQ_HEADER_ROW, column=_FREQ_START_COL + idx, value=hdr)
+        _apply_header_style(hdr_cell)
+
+    if table_rows:
+        for ridx, item in enumerate(table_rows, start=0):
+            out_row = _FREQ_HEADER_ROW + 1 + ridx
+            vals_and_align = [
+                (item.get('count'), 'right'),
+                (item.get('score_ns'), 'right'),
+                (item.get('point_ns'), 'right'),
+                (item.get('point_ov'), 'right'),
+                (item.get('pct_ns'), 'right'),
+                (item.get('pct_ov'), 'right'),
+            ]
+            for cidx, (val, align) in enumerate(vals_and_align):
+                dc = ws.cell(row=out_row, column=_FREQ_START_COL + cidx, value=val)
+                _apply_data_style(dc, align=align)
+    else:
+        msg_cell = ws.cell(row=_FREQ_HEADER_ROW + 1, column=_FREQ_START_COL, value='Ingen data til frekvenstavle')
+        if Font is not None:
+            msg_cell.font = Font(italic=True)
+
 
 def write_last_tournament_board_layout_sheets(
     writer,

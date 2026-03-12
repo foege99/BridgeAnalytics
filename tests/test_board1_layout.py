@@ -1503,6 +1503,78 @@ def test_mini_traveller_missing_pct_is_none():
     assert ws.cell(row=2, column=18).value == 'ukendt'   # Pct Decl
 
 
+def test_frekvenstavlen_starts_at_e49_or_later():
+    """Frekvenstavlen title should be placed in column E at row 49 or below."""
+    df = _make_df(score_NS=50, score_ØV=-50)
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    freq_title_row = next(
+        r for r in range(1, 300)
+        if str(ws.cell(row=r, column=5).value or '').startswith('Frekvenstavlen')
+    )
+    assert freq_title_row >= 49
+
+
+def test_frekvenstavlen_recomputes_mp_and_pct_with_ties():
+    """Frekvenstavlen should recompute MP/pct from combined same-deal scores."""
+    df_latest = _make_df(tournament_date='2026-01-15', score_NS=150, score_ØV=None)
+    df_tie_1 = _make_df(
+        tournament_date='2026-01-08',
+        ns1='A NS1', ns2='A NS2', ew1='A EW1', ew2='A EW2',
+        score_NS=50, score_ØV=None,
+    )
+    df_tie_2 = _make_df(
+        tournament_date='2026-01-01',
+        ns1='B NS1', ns2='B NS2', ew1='B EW1', ew2='B EW2',
+        score_NS=50, score_ØV=None,
+    )
+    df_low = _make_df(
+        tournament_date='2025-12-25',
+        ns1='C NS1', ns2='C NS2', ew1='C EW1', ew2='C EW2',
+        score_NS=-110, score_ØV=None,
+    )
+    df = pd.concat([df_latest, df_tie_1, df_tie_2, df_low], ignore_index=True)
+
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    freq_title_row = next(
+        r for r in range(1, 300)
+        if str(ws.cell(row=r, column=5).value or '').startswith('Frekvenstavlen')
+    )
+    header_row = freq_title_row + 1
+    data_row_1 = header_row + 1
+    data_row_2 = header_row + 2
+    data_row_3 = header_row + 3
+
+    # Score +150 (count=1): top on 4 boards => MP 6/0 => 100/0
+    assert ws.cell(row=data_row_1, column=5).value == 1
+    assert ws.cell(row=data_row_1, column=6).value == 150
+    assert ws.cell(row=data_row_1, column=7).value == 6
+    assert ws.cell(row=data_row_1, column=8).value == 0
+    assert ws.cell(row=data_row_1, column=9).value == 100.0
+    assert ws.cell(row=data_row_1, column=10).value == 0.0
+
+    # Score +50 (count=2): one lower + one tie => MP 3/3 => 50/50
+    assert ws.cell(row=data_row_2, column=5).value == 2
+    assert ws.cell(row=data_row_2, column=6).value == 50
+    assert ws.cell(row=data_row_2, column=7).value == 3
+    assert ws.cell(row=data_row_2, column=8).value == 3
+    assert ws.cell(row=data_row_2, column=9).value == 50.0
+    assert ws.cell(row=data_row_2, column=10).value == 50.0
+
+    # Score -110 (count=1): bottom => MP 0/6 => 0/100
+    assert ws.cell(row=data_row_3, column=5).value == 1
+    assert ws.cell(row=data_row_3, column=6).value == -110
+    assert ws.cell(row=data_row_3, column=7).value == 0
+    assert ws.cell(row=data_row_3, column=8).value == 6
+    assert ws.cell(row=data_row_3, column=9).value == 0.0
+    assert ws.cell(row=data_row_3, column=10).value == 100.0
+
+
 # ---------------------------------------------------------------------------
 # Tests for Double Dummy table (E5:K9)
 # ---------------------------------------------------------------------------
