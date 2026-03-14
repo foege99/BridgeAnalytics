@@ -820,6 +820,151 @@ def test_bid_scaffold_second_hand_takeout_double_option():
     assert ws.cell(row=21, column=4).value == 'X'
 
 
+def test_second_hand_uses_natural_one_nt_overcall_with_diamond_stopper():
+    """After 1D, balanced 15-18 with diamond stopper should overcall 1NT."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'J8.AJ.KJ853.Q753',
+        'Ø_hand': 'A7.K43.AQ62.KJT2',
+        'S_hand': 'T53.Q9872.92.J84',
+        'V_hand': 'KQ9642.T65.T74.6',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    n_first = _find_call(seq, 'N', 1)
+    o_first = _find_call(seq, 'Ø', 1)
+
+    assert n_first is not None
+    assert str(n_first.get('display_bid')) == '1♦'
+
+    assert o_first is not None
+    assert str(o_first.get('display_bid')) == '1NT'
+    assert str(o_first.get('rule_id')) == 'natural_one_nt_overcall'
+
+
+def test_second_hand_does_not_overcall_one_nt_without_stopper():
+    """Balanced values alone are not enough for 1NT overcall if stopper is missing."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'J8.AJ.KJ853.Q753',
+        'Ø_hand': 'AQ7.KQ3.862.KJ72',
+        'S_hand': 'T53.Q9872.92.J84',
+        'V_hand': 'K9642.T65.T74.6',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    o_first = _find_call(seq, 'Ø', 1)
+
+    assert o_first is not None
+    assert str(o_first.get('display_bid')) == 'PAS'
+    assert str(o_first.get('rule_id')) == 'competitive_pass'
+
+
+def test_fourth_hand_natural_one_nt_overcall_not_capped_to_pass():
+    """After V-PAS, N-PAS, Ø-1D, S should keep natural 1NT overcall (not range-ceiling PAS)."""
+    row = {
+        'dealer': 'V',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'K653.QT96.4.A984',
+        'Ø_hand': 'J8.AJ.KJ853.Q753',
+        'S_hand': 'A7.K43.AQ62.KJT2',
+        'V_hand': 'QT942.8752.T7.63',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    s_first = _find_call(seq, 'S', 1)
+
+    assert s_first is not None
+    assert str(s_first.get('display_bid')) == '1NT'
+    assert str(s_first.get('rule_id')) == 'natural_one_nt_overcall'
+
+
+def test_illegal_repeated_double_is_legalized_to_pass():
+    """After a side has doubled the current contract, another X without new enemy contract is illegal and becomes PAS."""
+    row = {
+        'dealer': 'V',
+        'vul': 'Alle i zonen',
+        'N_hand': 'K653.QT96.4.A984',
+        'Ø_hand': 'J8.AJ.KJ853.Q753',
+        'S_hand': 'A7.K43.AQ62.KJT2',
+        'V_hand': 'QT942.8752.T97.6',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    # No side may double twice without an intervening opponent contract call.
+    doubles = [(idx, c) for idx, c in enumerate(seq) if str(c.get('display_bid')) == 'X']
+    for i in range(1, len(doubles)):
+        prev_idx, prev_call = doubles[i - 1]
+        curr_idx, curr_call = doubles[i]
+        prev_seat = str(prev_call.get('dealer') or '')
+        curr_seat = str(curr_call.get('dealer') or '')
+        if opening_bid_module._seat_side(prev_seat) != opening_bid_module._seat_side(curr_seat):
+            continue
+
+        has_new_enemy_contract = False
+        same_side = opening_bid_module._seat_side(curr_seat)
+        enemy_side = 'ØV' if same_side == 'NS' else 'NS'
+        for mid in seq[prev_idx + 1:curr_idx]:
+            mid_seat = str(mid.get('dealer') or '')
+            mid_bid = str(mid.get('bid') or 'PASS').upper()
+            if opening_bid_module._seat_side(mid_seat) != enemy_side:
+                continue
+            if opening_bid_module._parse_contract_bid(mid_bid) is not None:
+                has_new_enemy_contract = True
+                break
+
+        assert has_new_enemy_contract
+
+    # Explicitly verify that illegal doubles can be rewritten to pass when needed.
+    assert any(str(c.get('rule_id')) == 'illegal_competitive_double_pass' for c in seq)
+
+
+def test_responder_uses_stayman_after_partner_one_nt_overcall():
+    """After 1D-(1NT)-P, responder with 9 HCP and both 4-card majors starts with Stayman 2C."""
+    row = {
+        'dealer': 'V',
+        'vul': 'Alle i zonen',
+        'N_hand': 'K653.QT96.4.A984',
+        'Ø_hand': 'J8.AJ.KJ853.Q753',
+        'S_hand': 'A7.K43.AQ62.KJT2',
+        'V_hand': 'QT942.8752.T97.6',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    s_first = _find_call(seq, 'S', 1)
+    n_second = _find_call(seq, 'N', 2)
+    s_second = _find_call(seq, 'S', 2)
+    n_third = _find_call(seq, 'N', 3)
+    s_third = _find_call(seq, 'S', 3)
+    n_fourth = _find_call(seq, 'N', 4)
+
+    assert s_first is not None
+    assert str(s_first.get('display_bid')) == '1NT'
+    assert str(s_first.get('rule_id')) == 'natural_one_nt_overcall'
+
+    assert n_second is not None
+    assert str(n_second.get('display_bid')) == '2♣'
+    assert str(n_second.get('rule_id')) == 'stayman_artificial'
+
+    assert s_second is not None
+    assert str(s_second.get('display_bid')) == '2♦'
+    assert str(s_second.get('rule_id')) == 'stayman_opener_rebid'
+
+    assert n_third is not None
+    assert str(n_third.get('display_bid')) == '2♥'
+    assert str(n_third.get('rule_id')) == 'stayman_responder_continuation_2h'
+
+    assert s_third is not None
+    assert str(s_third.get('display_bid')) == '3NT'
+    assert str(s_third.get('rule_id')) == 'stayman_opener_followup'
+
+    assert n_fourth is not None
+    assert str(n_fourth.get('display_bid')) == 'PAS'
+
+
 def test_takeout_double_partner_response_jump_new_suit_after_pass():
     """After 1D-X-pass, advancer should jump with constructive values and 4+ major."""
     row = {

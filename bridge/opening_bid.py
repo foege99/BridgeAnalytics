@@ -564,6 +564,149 @@ def _responses_to_takeout_double_for_seat(seat: str) -> dict[str, Any]:
     return out if isinstance(out, Mapping) else {}
 
 
+def _one_nt_overcall_params_for_seat(seat: str) -> dict[str, Any]:
+    comp = _competitive_bidding_for_seat(seat)
+    overcalls = (comp.get("overcalls", {}) or {}) if isinstance(comp, Mapping) else {}
+    one_nt = (overcalls.get("one_nt_overcall", {}) or {}) if isinstance(overcalls, Mapping) else {}
+
+    strength = (one_nt.get("strength", {}) or {}) if isinstance(one_nt, Mapping) else {}
+    hcp_min, hcp_max = _hcp_bounds_from_spec(strength, 15, 18)
+
+    req = (one_nt.get("requirements", {}) or {}) if isinstance(one_nt, Mapping) else {}
+    require_stopper = _bool_or_default(
+        req.get("stopper_in_opponents_suit") if isinstance(req, Mapping) else None,
+        True,
+    )
+
+    shape_txt = str(one_nt.get("shape") or "balanced").strip().lower()
+    require_balanced = shape_txt in ("", "balanced")
+
+    return {
+        "hcp_min": int(hcp_min),
+        "hcp_max": int(hcp_max),
+        "require_balanced": bool(require_balanced),
+        "require_stopper": bool(require_stopper),
+    }
+
+
+def _one_nt_response_style_for_seat(seat: str) -> str:
+    _, profile_cfg = _profile_for_seat(seat)
+    style = str((profile_cfg or {}).get("one_nt_response_style") or "standard_stayman_jacoby").strip()
+    return style or "standard_stayman_jacoby"
+
+
+def _one_nt_response_style_block_for_seat(seat: str) -> dict[str, Any]:
+    sys_def = _system_def_for_seat(seat)
+    one_nt_resp = (sys_def.get("one_nt_response_system", {}) or {}) if isinstance(sys_def, Mapping) else {}
+    if not isinstance(one_nt_resp, Mapping):
+        return {}
+
+    style = _one_nt_response_style_for_seat(seat)
+    block = one_nt_resp.get(style, {})
+    return block if isinstance(block, Mapping) else {}
+
+
+def _one_nt_stayman_continuation_block_for_seat(seat: str, section_key: str) -> dict[str, Any]:
+    style_block = _one_nt_response_style_block_for_seat(seat)
+    section = (style_block.get(section_key, {}) or {}) if isinstance(style_block, Mapping) else {}
+    return section if isinstance(section, Mapping) else {}
+
+
+def _one_nt_stayman_params_for_seat(seat: str) -> dict[str, Any]:
+    style = _one_nt_response_style_for_seat(seat)
+    style_cfg = _one_nt_response_style_block_for_seat(seat)
+
+    responses = (style_cfg.get("responses", {}) or {}) if isinstance(style_cfg, Mapping) else {}
+    if not isinstance(responses, Mapping):
+        responses = {}
+
+    two_c = (responses.get("2C", {}) or {}) if isinstance(responses, Mapping) else {}
+    if not isinstance(two_c, Mapping):
+        two_c = {}
+
+    # Standard fallback for Stayman when style does not specify explicit values.
+    hcp_min = max(0, _int_or_default(two_c.get("hcp_min", 8), 8))
+    requires_four_card_major = _bool_or_default(two_c.get("promises_four_card_major"), True)
+
+    return {
+        "hcp_min": int(hcp_min),
+        "requires_four_card_major": bool(requires_four_card_major),
+        "style": style,
+    }
+
+
+def _has_opponent_non_pass_after_partner_last_nt(
+    prior_calls: list[Mapping[str, Any]],
+    seat: str,
+) -> bool:
+    partner = _partner_of(seat)
+    if partner is None:
+        return False
+
+    side = _seat_side(seat)
+    opp_side = "ØV" if side == "NS" else "NS"
+
+    partner_nt_idx: int | None = None
+    for idx in range(len(prior_calls) - 1, -1, -1):
+        call = prior_calls[idx]
+        c_seat = _normalize_seat(call.get("dealer"))
+        if c_seat != partner:
+            continue
+        parsed = _parse_contract_bid(str(call.get("bid") or "PASS").upper())
+        if parsed is None or parsed[1] != "NT":
+            continue
+        partner_nt_idx = idx
+        break
+
+    if partner_nt_idx is None:
+        return False
+
+    for call in prior_calls[partner_nt_idx + 1:]:
+        c_seat = _normalize_seat(call.get("dealer"))
+        if c_seat is None or _seat_side(c_seat) != opp_side:
+            continue
+        if not _is_pass_bid(call.get("bid")):
+            return True
+
+    return False
+
+
+def _has_opponent_contract_after_partner_last_contract(
+    prior_calls: list[Mapping[str, Any]],
+    seat: str,
+) -> bool:
+    partner = _partner_of(seat)
+    if partner is None:
+        return False
+
+    side = _seat_side(seat)
+    opp_side = "ØV" if side == "NS" else "NS"
+
+    partner_contract_idx: int | None = None
+    for idx in range(len(prior_calls) - 1, -1, -1):
+        call = prior_calls[idx]
+        c_seat = _normalize_seat(call.get("dealer"))
+        if c_seat != partner:
+            continue
+        parsed = _parse_contract_bid(str(call.get("bid") or "PASS").upper())
+        if parsed is None:
+            continue
+        partner_contract_idx = idx
+        break
+
+    if partner_contract_idx is None:
+        return False
+
+    for call in prior_calls[partner_contract_idx + 1:]:
+        c_seat = _normalize_seat(call.get("dealer"))
+        if c_seat is None or _seat_side(c_seat) != opp_side:
+            continue
+        if _parse_contract_bid(str(call.get("bid") or "PASS").upper()) is not None:
+            return True
+
+    return False
+
+
 def _negative_double_params_for_seat(seat: str) -> dict[str, Any]:
     comp = _competitive_bidding_for_seat(seat)
     neg = (comp.get("negative_double_system", {}) or {}) if isinstance(comp, Mapping) else {}
@@ -1361,6 +1504,48 @@ def _suggest_second_hand_competitive(
 
     log_lines.append(double_reason)
 
+    nt_params = _one_nt_overcall_params_for_seat(second_seat)
+    sys_def = _system_def_for_seat(second_seat)
+    shape_defs = (sys_def.get("shape_definitions", {}) or {}) if isinstance(sys_def, Mapping) else {}
+    if not isinstance(shape_defs, Mapping):
+        shape_defs = {}
+    balanced_shapes = shape_defs.get("balanced_shapes")
+    if not isinstance(balanced_shapes, list):
+        balanced_shapes = [[4, 3, 3, 3], [4, 4, 3, 2], [5, 3, 3, 2]]
+
+    is_balanced = _shape_matches(tuple(ctx.get("shape_shdc", (0, 0, 0, 0))), list(balanced_shapes))
+    stopper_in_opening = first_strain in ("S", "H", "D", "C") and _has_stopper_in_suit(str(hand_dot), first_strain)
+
+    nt_overcall_bid = None
+    nt_overcall_rule = "natural_one_nt_overcall"
+    nt_overcall_line = f"{hand_tag} 1NT-indmelding: afvist."
+    if _is_higher_contract("1NT", first_bid):
+        hcp_min = int(nt_params.get("hcp_min", 15))
+        hcp_max = int(nt_params.get("hcp_max", 18))
+        hcp_ok = hcp_min <= int(ctx["hcp"]) <= hcp_max
+        balanced_ok = (not bool(nt_params.get("require_balanced", True))) or is_balanced
+        stopper_ok = (not bool(nt_params.get("require_stopper", True))) or stopper_in_opening
+
+        if hcp_ok and balanced_ok and stopper_ok:
+            nt_overcall_bid = "1NT"
+            nt_overcall_line = (
+                f"{hand_tag} 1NT-indmelding: OK ({hcp_min}-{hcp_max} HCP, jævn hånd"
+                + (", hold i modpartens farve" if bool(nt_params.get("require_stopper", True)) else "")
+                + ")."
+            )
+        else:
+            missing: list[str] = []
+            if not hcp_ok:
+                missing.append(f"HCP uden for {hcp_min}-{hcp_max}")
+            if not balanced_ok:
+                missing.append("ikke jævn hånd")
+            if not stopper_ok:
+                missing.append("mangler hold i modpartens farve")
+            nt_overcall_line = f"{hand_tag} 1NT-indmelding: afvist ({'; '.join(missing)})."
+    else:
+        nt_overcall_line = f"{hand_tag} 1NT-indmelding: afvist (1NT er ikke over {_to_display_bid(first_bid)})."
+    log_lines.append(nt_overcall_line)
+
     candidate_suits = sorted(
         [s for s in ("S", "H", "D", "C") if s != first_strain],
         key=lambda s: (suit_lens[s], _strain_order(s)),
@@ -1394,7 +1579,35 @@ def _suggest_second_hand_competitive(
     )
     force_double = double_type == "lead_directing"
 
-    if double_ok and (force_double or not prefer_overcall):
+    if force_double and double_ok:
+        return {
+            "dealer": second_seat,
+            "profile": None,
+            "bid": "X",
+            "display_bid": "X",
+            "rule_id": double_rule_id,
+            "explanation": double_explanation,
+            "log_lines": log_lines + [
+                f"{hand_tag} valg: X",
+                f"{hand_tag} regel-id: {double_rule_id}",
+            ],
+        }
+
+    if nt_overcall_bid is not None:
+        return {
+            "dealer": second_seat,
+            "profile": None,
+            "bid": nt_overcall_bid,
+            "display_bid": _to_display_bid(nt_overcall_bid),
+            "rule_id": nt_overcall_rule,
+            "explanation": "2. hånd vælger naturlig 1NT-indmelding med jævn hånd og hold i modpartens farve.",
+            "log_lines": log_lines + [
+                f"{hand_tag} valg: {_to_display_bid(nt_overcall_bid)}",
+                f"{hand_tag} regel-id: {nt_overcall_rule}",
+            ],
+        }
+
+    if double_ok and not prefer_overcall:
         return {
             "dealer": second_seat,
             "profile": None,
@@ -1827,6 +2040,50 @@ def _suggest_third_hand_after_partner_open(
         and resp_seat != third_seat
     )
 
+    partner_last_contract = _latest_partner_contract_call(list(prior_calls or []), third_seat)
+    partner_last_rule = str((partner_last_contract or {}).get("rule_id") or "")
+
+    # Opener reply to partner's Stayman over 1NT (opening or natural 1NT overcall).
+    if (
+        current_is_opener_rebid
+        and open_lvl == 1
+        and open_strain == "NT"
+        and resp_lvl == 2
+        and resp_strain == "C"
+        and partner_last_rule == "stayman_artificial"
+    ):
+        # If opponents have made a real contract call after Stayman, revert to competitive handling.
+        if not _has_opponent_contract_after_partner_last_contract(list(prior_calls or []), third_seat):
+            if int(suit_lens["H"]) >= 4:
+                stayman_reply = "2H"
+                stayman_note = "viser 4+ hjerter"
+            elif int(suit_lens["S"]) >= 4:
+                stayman_reply = "2S"
+                stayman_note = "viser 4+ spar"
+            else:
+                stayman_reply = "2D"
+                stayman_note = "afviser 4-k major"
+
+            if _is_higher_contract(stayman_reply, highest_contract):
+                display = _to_display_bid(stayman_reply)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": stayman_reply,
+                    "display_bid": display,
+                    "rule_id": "stayman_opener_rebid",
+                    "explanation": "Åbner svarer på Stayman efter makkers 2♣.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} stayman-svar: {stayman_note} -> {display}.",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: stayman_opener_rebid",
+                    ],
+                }
+        else:
+            log_lines.append(
+                f"{hand_tag} stayman-svar: modparten har meldt kontrakt efter 2♣, skifter til konkurrencelogik."
+            )
+
     # Responder first call: 1m-1NT limited range (non-forcing by default).
     if (
         not opp_has_contract
@@ -2224,9 +2481,7 @@ def _suggest_third_hand_after_partner_open(
     )
 
     # Reply to partner's prior fourth-suit forcing ask.
-    partner_last = _latest_partner_contract_call(list(prior_calls or []), third_seat)
-    partner_last_rule = str((partner_last or {}).get("rule_id") or "")
-    partner_last_bid = str((partner_last or {}).get("bid") or "PASS")
+    partner_last_bid = str((partner_last_contract or {}).get("bid") or "PASS")
     partner_last_parsed = _parse_contract_bid(partner_last_bid)
     if partner_last_rule == "third_hand_fourth_suit_forcing_ask" and partner_last_parsed is not None:
         asked_strain = partner_last_parsed[1]
@@ -2253,7 +2508,15 @@ def _suggest_third_hand_after_partner_open(
             f"{hand_tag} 4SF-svar: makker spurgte om hold i {asked_txt}, men intet sikkert hold fundet -> ingen direkte sansmelding."
         )
 
-    if fourth_unbid is not None and fsf_enabled:
+    stayman_nt_sequence = (
+        len(side_history) >= 2
+        and side_history[0][1] == 1
+        and side_history[0][2] == "NT"
+        and side_history[1][1] == 2
+        and side_history[1][2] == "C"
+    )
+
+    if fourth_unbid is not None and fsf_enabled and (not stayman_nt_sequence):
         fourth_txt = _to_display_bid(f"1{fourth_unbid}")[1:]
         if two_over_one_enabled and side_has_2o1_dhs:
             log_lines.append(
@@ -2297,6 +2560,193 @@ def _suggest_third_hand_after_partner_open(
                         f"{hand_tag} regel-id: third_hand_fourth_suit_forcing_ask",
                     ],
                 }
+
+    # Responder structure after partner 1NT (opening or natural 1NT overcall): prioritize Stayman 2C.
+    if partner_strain == "NT" and partner_lvl == 1 and current_is_responder_first:
+        stayman = _one_nt_stayman_params_for_seat(third_seat)
+        stayman_hcp_min = int(stayman.get("hcp_min", 8))
+        requires_four_major = bool(stayman.get("requires_four_card_major", True))
+        has_four_major = suit_lens["S"] >= 4 or suit_lens["H"] >= 4
+        interference_after_nt = _has_opponent_non_pass_after_partner_last_nt(list(prior_calls or []), third_seat)
+
+        if interference_after_nt:
+            log_lines.append(
+                f"{hand_tag} stayman: afvist (interferens efter makkers 1NT)."
+            )
+        elif int(ctx["hcp"]) >= stayman_hcp_min and ((not requires_four_major) or has_four_major):
+            if _is_higher_contract("2C", highest_contract):
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": "2C",
+                    "display_bid": _to_display_bid("2C"),
+                    "rule_id": "stayman_artificial",
+                    "artificial": True,
+                    "explanation": "Responder vælger Stayman 2♣ over makkers 1NT.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} stayman: style={stayman.get('style')} med min {stayman_hcp_min} HCP.",
+                        f"{hand_tag} stayman: majorlængder H{int(ctx['hearts'])}/S{int(ctx['spades'])} -> vælger 2♣.",
+                        f"{hand_tag} valg: {_to_display_bid('2C')}",
+                        f"{hand_tag} regel-id: stayman_artificial",
+                    ],
+                }
+        else:
+            need = []
+            if int(ctx["hcp"]) < stayman_hcp_min:
+                need.append(f"HCP < {stayman_hcp_min}")
+            if requires_four_major and (not has_four_major):
+                need.append("ingen 4-k major")
+            if need:
+                log_lines.append(f"{hand_tag} stayman: afvist ({'; '.join(need)}).")
+
+    # Stayman continuations after 1NT-2C-2D by style config.
+    if len(side_history) == 3:
+        h0_seat, h0_lvl, h0_strain = side_history[0]
+        h1_seat, h1_lvl, h1_strain = side_history[1]
+        h2_seat, h2_lvl, h2_strain = side_history[2]
+
+        stayman_2d_cont = _one_nt_stayman_continuation_block_for_seat(
+            third_seat,
+            "responder_continuations_after_1NT_2C_2D",
+        )
+
+        # Responder continuation: 1NT-2C-2D-(?).
+        if (
+            h0_lvl == 1 and h0_strain == "NT"
+            and h1_lvl == 2 and h1_strain == "C"
+            and h2_lvl == 2 and h2_strain == "D"
+            and h0_seat != third_seat
+            and h1_seat == third_seat
+            and h2_seat == h0_seat
+            and (not _has_opponent_contract_after_partner_last_contract(list(prior_calls or []), third_seat))
+            and stayman_2d_cont
+        ):
+            hcp_val = int(ctx["hcp"])
+
+            if "2H" in stayman_2d_cont and int(suit_lens["S"]) >= 4:
+                if _is_higher_contract("2H", highest_contract):
+                    return {
+                        "dealer": third_seat,
+                        "profile": None,
+                        "bid": "2H",
+                        "display_bid": _to_display_bid("2H"),
+                        "rule_id": "stayman_responder_continuation_2h",
+                        "explanation": "Stayman-fortsættelse: 2♥ viser 4+ spar (evt. også 4♥).",
+                        "log_lines": log_lines + [
+                            f"{hand_tag} stayman-fortsættelse: efter 1NT-2♣-2♦ med 4+ spar vælges 2♥.",
+                            f"{hand_tag} valg: {_to_display_bid('2H')}",
+                            f"{hand_tag} regel-id: stayman_responder_continuation_2h",
+                        ],
+                    }
+
+            if "2S" in stayman_2d_cont and int(suit_lens["H"]) >= 4 and int(suit_lens["S"]) < 4:
+                if _is_higher_contract("2S", highest_contract):
+                    return {
+                        "dealer": third_seat,
+                        "profile": None,
+                        "bid": "2S",
+                        "display_bid": _to_display_bid("2S"),
+                        "rule_id": "stayman_responder_continuation_2s",
+                        "explanation": "Stayman-fortsættelse: 2♠ viser 4+ hjerter og benægter 4 spar.",
+                        "log_lines": log_lines + [
+                            f"{hand_tag} stayman-fortsættelse: efter 1NT-2♣-2♦ med 4+♥ uden 4♠ vælges 2♠.",
+                            f"{hand_tag} valg: {_to_display_bid('2S')}",
+                            f"{hand_tag} regel-id: stayman_responder_continuation_2s",
+                        ],
+                    }
+
+            cont_2nt = (stayman_2d_cont.get("2NT", {}) or {}) if isinstance(stayman_2d_cont, Mapping) else {}
+            cont_3nt = (stayman_2d_cont.get("3NT", {}) or {}) if isinstance(stayman_2d_cont, Mapping) else {}
+
+            lo_2nt, hi_2nt = _hcp_bounds_from_spec(cont_2nt if isinstance(cont_2nt, Mapping) else None, 8, 9)
+            lo_3nt, hi_3nt = _hcp_bounds_from_spec(cont_3nt if isinstance(cont_3nt, Mapping) else None, 10, 15)
+
+            if "2NT" in stayman_2d_cont and lo_2nt <= hcp_val <= hi_2nt and _is_higher_contract("2NT", highest_contract):
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": "2NT",
+                    "display_bid": _to_display_bid("2NT"),
+                    "rule_id": "stayman_responder_continuation_2nt",
+                    "explanation": "Stayman-fortsættelse: invit uden 4-k major.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} stayman-fortsættelse: invit uden 4-k major ({lo_2nt}-{hi_2nt} HCP) -> 2NT.",
+                        f"{hand_tag} valg: {_to_display_bid('2NT')}",
+                        f"{hand_tag} regel-id: stayman_responder_continuation_2nt",
+                    ],
+                }
+
+            if "3NT" in stayman_2d_cont and lo_3nt <= hcp_val <= hi_3nt and _is_higher_contract("3NT", highest_contract):
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": "3NT",
+                    "display_bid": _to_display_bid("3NT"),
+                    "rule_id": "stayman_responder_continuation_3nt",
+                    "explanation": "Stayman-fortsættelse: 3NT to play.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} stayman-fortsættelse: to-play interval ({lo_3nt}-{hi_3nt} HCP) -> 3NT.",
+                        f"{hand_tag} valg: {_to_display_bid('3NT')}",
+                        f"{hand_tag} regel-id: stayman_responder_continuation_3nt",
+                    ],
+                }
+
+    # Opener followup: 1NT-2C-2D-2H/2S-(?).
+    if len(side_history) == 4 and current_is_opener_rebid:
+        h0_seat, h0_lvl, h0_strain = side_history[0]
+        h1_seat, h1_lvl, h1_strain = side_history[1]
+        h2_seat, h2_lvl, h2_strain = side_history[2]
+        h3_seat, h3_lvl, h3_strain = side_history[3]
+        stayman_2d_cont = _one_nt_stayman_continuation_block_for_seat(
+            third_seat,
+            "responder_continuations_after_1NT_2C_2D",
+        )
+
+        if (
+            h0_lvl == 1 and h0_strain == "NT"
+            and h1_lvl == 2 and h1_strain == "C"
+            and h2_lvl == 2 and h2_strain == "D"
+            and h3_lvl == 2 and h3_strain in ("H", "S")
+            and h0_seat == third_seat
+            and h1_seat == h3_seat
+            and h2_seat == h0_seat
+            and (not _has_opponent_contract_after_partner_last_contract(list(prior_calls or []), third_seat))
+            and stayman_2d_cont
+        ):
+            key = "2H" if h3_strain == "H" else "2S"
+            move_cfg = (stayman_2d_cont.get(key, {}) or {}) if isinstance(stayman_2d_cont, Mapping) else {}
+            followup = (move_cfg.get("opener_followup", {}) or {}) if isinstance(move_cfg, Mapping) else {}
+            if isinstance(followup, Mapping):
+                if h3_strain == "H":
+                    has_fit = int(suit_lens["S"]) >= 3
+                    fit_key = "with_spade_fit" if has_fit else "without_spade_fit"
+                else:
+                    has_fit = int(suit_lens["H"]) >= 3
+                    fit_key = "with_heart_fit" if has_fit else "without_heart_fit"
+
+                follow_choice = (followup.get(fit_key, {}) or {}) if isinstance(followup, Mapping) else {}
+                target = str((follow_choice.get("bid") if isinstance(follow_choice, Mapping) else "") or "").strip().upper()
+
+                # In this structure opener decides the final strain: after 1NT-2C-2D-2H,
+                # opener with no spade fit may still choose hearts directly with 4+ hearts.
+                if h3_strain == "H" and (not has_fit) and int(suit_lens["H"]) >= 4:
+                    target = "4H"
+
+                if _parse_contract_bid(target) is not None and _is_higher_contract(target, highest_contract):
+                    display = _to_display_bid(target)
+                    return {
+                        "dealer": third_seat,
+                        "profile": None,
+                        "bid": target,
+                        "display_bid": display,
+                        "rule_id": "stayman_opener_followup",
+                        "explanation": "Åbner følger Stayman-aftalen efter responderens fortsættelse.",
+                        "log_lines": log_lines + [
+                            f"{hand_tag} stayman-opfølgning: {fit_key} -> {display}.",
+                            f"{hand_tag} valg: {display}",
+                            f"{hand_tag} regel-id: stayman_opener_followup",
+                        ],
+                    }
 
     if opp_has_contract:
         dbl_type = str(double_ctx.get("double_type") or "none")
@@ -2574,9 +3024,51 @@ def _is_higher_contract(candidate_bid: str | None, reference_bid: str | None) ->
     return False
 
 
-def _legalize_competitive_contract(call: dict[str, Any], reference_bid: str | None, hand_tag: str) -> dict[str, Any]:
+def _is_legal_double_call(prior_calls: list[dict[str, Any]] | None, seat: str | None) -> bool:
+    seat_norm = _normalize_seat(seat)
+    if seat_norm is None:
+        return False
+
+    side = _seat_side(seat_norm)
+    opp_side = "ØV" if side == "NS" else "NS"
+
+    for prev in reversed(list(prior_calls or [])):
+        prev_bid = str(prev.get("bid") or "PASS").upper()
+        if _is_pass_bid(prev_bid):
+            continue
+
+        # Double is only legal over the latest non-pass opponent contract call.
+        if _parse_contract_bid(prev_bid) is None:
+            return False
+
+        prev_seat = _normalize_seat(prev.get("dealer"))
+        if prev_seat is None:
+            return False
+        return _seat_side(prev_seat) == opp_side
+
+    return False
+
+
+def _legalize_competitive_contract(
+    call: dict[str, Any],
+    reference_bid: str | None,
+    hand_tag: str,
+    prior_calls: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     bid = str(call.get("bid") or "PASS").upper()
-    if bid in ("PASS", "PAS", "X", "DBL", "DOUBLE"):
+    if bid in ("PASS", "PAS"):
+        return call
+
+    if bid in ("X", "DBL", "DOUBLE"):
+        if _is_legal_double_call(prior_calls, str(call.get("dealer") or "")):
+            return call
+
+        call["bid"] = "PASS"
+        call["display_bid"] = "PAS"
+        call["rule_id"] = "illegal_competitive_double_pass"
+        call["log_lines"] = list(call.get("log_lines") or []) + [
+            f"{hand_tag} justering: dobling ikke lovlig i denne position, skifter til PAS.",
+        ]
         return call
 
     if _is_higher_contract(bid, reference_bid):
@@ -2829,10 +3321,30 @@ def _apply_state_ceiling_to_call(
             rule_id_txt = str(out.get("rule_id") or "")
             keep_constructive_3nt = "fourth_suit_reply_3nt_with_stopper" in rule_id_txt
             keep_game_place_major = "responder_after_1M_2new_2M_game_place" in rule_id_txt
-            hard_reject = required > (estimate.tricks_range.high + 0.01)
+            keep_competitive_one_nt = (
+                "natural_one_nt_overcall" in rule_id_txt and str(out.get("bid") or "").upper() == "1NT"
+            )
+            keep_stayman_artificial = "stayman_artificial" in rule_id_txt
+            keep_stayman_opener_rebid = "stayman_opener_rebid" in rule_id_txt
+            keep_stayman_followup = (
+                "stayman_opener_followup" in rule_id_txt
+                or "stayman_responder_continuation_" in rule_id_txt
+                or "stayman_responder_correction" in rule_id_txt
+            )
+            hard_reject = (
+                (not keep_competitive_one_nt)
+                and (not keep_stayman_artificial)
+                and (not keep_stayman_opener_rebid)
+                and (not keep_stayman_followup)
+                and required > (estimate.tricks_range.high + 0.01)
+            )
             soft_reject = (
                 (not keep_constructive_3nt)
                 and (not keep_game_place_major)
+                and (not keep_competitive_one_nt)
+                and (not keep_stayman_artificial)
+                and (not keep_stayman_opener_rebid)
+                and (not keep_stayman_followup)
                 and estimate.confidence >= 0.35
                 and required > (estimate.tricks_range.midpoint + 0.50)
             )
@@ -2966,7 +3478,7 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                 reserved_cuebid_strains=reserved,
                 prior_calls=call_sequence,
             )
-            call = _legalize_competitive_contract(call, highest_contract, hand_tag)
+            call = _legalize_competitive_contract(call, highest_contract, hand_tag, prior_calls=call_sequence)
             call = _apply_state_ceiling_to_call(row, call_sequence, seat, call, hand_tag)
             call_sequence.append(call)
             continue
@@ -2985,7 +3497,7 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                 hand_tag=hand_tag,
                 prior_calls=call_sequence,
             )
-            call = _legalize_competitive_contract(call, highest_contract, hand_tag)
+            call = _legalize_competitive_contract(call, highest_contract, hand_tag, prior_calls=call_sequence)
             call = _apply_state_ceiling_to_call(row, call_sequence, seat, call, hand_tag)
             call_sequence.append(call)
             continue
@@ -2997,7 +3509,7 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
             hand_tag=hand_tag,
             prior_calls=call_sequence,
         )
-        call = _legalize_competitive_contract(call, highest_contract, hand_tag)
+        call = _legalize_competitive_contract(call, highest_contract, hand_tag, prior_calls=call_sequence)
         call = _apply_state_ceiling_to_call(row, call_sequence, seat, call, hand_tag)
         call_sequence.append(call)
 
