@@ -2899,9 +2899,22 @@ def _suggest_third_hand_after_partner_open(
             }
 
     # Suit opening by partner: simple raise > new suit > pass.
+    # Guard: if opener (third_seat) has already concluded the Stayman sequence with
+    # stayman_opener_followup (e.g. 3NT), do not raise into a suit contract here —
+    # the final strain was already determined; just pass.
+    opener_already_placed_contract = any(
+        str(c.get("rule_id") or "") == "stayman_opener_followup"
+        and _normalize_seat(c.get("dealer")) == third_seat
+        for c in (prior_calls or [])
+    )
+    if opener_already_placed_contract:
+        log_lines.append(
+            f"{hand_tag} simple-raise/ny-farve: springes over (åbner har allerede placeret kontrakten via stayman_opener_followup)."
+        )
+
     partner_len = int(ctx["spades"] if partner_strain == "S" else ctx["hearts"] if partner_strain == "H" else ctx["diamonds"] if partner_strain == "D" else ctx["clubs"])
 
-    if partner_len >= 3 and int(ctx["hcp"]) >= 6:
+    if partner_len >= 3 and int(ctx["hcp"]) >= 6 and (not opener_already_placed_contract):
         cand = _lowest_higher_bid_for_strain(highest_contract, partner_strain)
         if cand is not None:
             display = _to_display_bid(cand)
@@ -2920,18 +2933,19 @@ def _suggest_third_hand_after_partner_open(
             }
 
     best_new = None
-    for s in sorted(("S", "H", "D", "C"), key=lambda x: (suit_lens[x], _strain_order(x)), reverse=True):
-        if s == partner_strain:
-            continue
-        if s in reserved:
-            continue
-        if suit_lens[s] < 4 or int(ctx["hcp"]) < 6:
-            continue
-        cand = _lowest_higher_bid_for_strain(highest_contract, s)
-        if cand is None:
-            continue
-        best_new = cand
-        break
+    if not opener_already_placed_contract:
+        for s in sorted(("S", "H", "D", "C"), key=lambda x: (suit_lens[x], _strain_order(x)), reverse=True):
+            if s == partner_strain:
+                continue
+            if s in reserved:
+                continue
+            if suit_lens[s] < 4 or int(ctx["hcp"]) < 6:
+                continue
+            cand = _lowest_higher_bid_for_strain(highest_contract, s)
+            if cand is None:
+                continue
+            best_new = cand
+            break
 
     if best_new is not None:
         display = _to_display_bid(best_new)
