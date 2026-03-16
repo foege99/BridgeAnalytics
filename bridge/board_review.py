@@ -415,6 +415,9 @@ def write_board1_layout_sheet(
     _WHITE_FILL = 'FFFFFF'
     _HILITE_YELLOW = 'FFF2CC'
     _ZEBRA_FILL = 'F7F7F7'
+    _CONTRACT_MATCH_GREEN = 'EAF4E3'
+    _CONTRACT_SAME_STRAIN_YELLOW = 'FFF2CC'
+    _CONTRACT_OTHER_STRAIN_RED = 'F8D7DA'
 
     # Bidding scaffold (visual placeholder, actual auction content comes later)
     _BID_HDR_ROW = 20
@@ -488,6 +491,43 @@ def write_board1_layout_sheet(
         if fourth_seat in bid_col_by_seat and fourth_display:
             call_sequence.append((fourth_seat, fourth_display))
 
+    def _contract_level_strain_from_bid_text(raw_bid) -> tuple[int | None, str | None]:
+        if raw_bid is None:
+            return None, None
+        txt = str(raw_bid).strip().upper().replace('UT', 'NT')
+        m = _CONTRACT_TOKEN_RE.search(txt)
+        if not m:
+            return None, None
+        try:
+            level = int(m.group(1))
+        except (TypeError, ValueError):
+            level = None
+        strain = _normalize_strain_key(m.group(2))
+        return level, strain
+
+    def _contract_bucket(level: int | None, strain_key: str | None) -> str | None:
+        if level is None or strain_key is None:
+            return None
+        if int(level) >= 6:
+            return 'slam'
+        if strain_key == 'NT':
+            game_level = 3
+        elif strain_key in ('S', 'H'):
+            game_level = 4
+        else:
+            game_level = 5
+        return 'game' if int(level) >= game_level else 'partscore'
+
+    predicted_level: int | None = None
+    predicted_strain: str | None = None
+    for _seat, display_bid in call_sequence:
+        lvl, st = _contract_level_strain_from_bid_text(display_bid)
+        if lvl is None or st is None:
+            continue
+        predicted_level = lvl
+        predicted_strain = st
+    predicted_bucket = _contract_bucket(predicted_level, predicted_strain)
+
     # Place calls in auction order: move right on same row; wrap to next row when needed.
     cur_row = _BID_DATA_START_ROW
     prev_col = None
@@ -551,7 +591,7 @@ def write_board1_layout_sheet(
     _TRAVELLER_HEADERS = [
         'NS', 'ØV', 'Kontrakt', 'Spilfører', 'Udspil', 'Stik',
         'Score NS', 'Score ØV', 'Point NS', 'Point ØV', 'Pct NS', 'Pct ØV',
-        'Pct Defense', 'Pct Decl',
+        'Pct NS (frekv)', 'Pt ØV (frekv)',
         'Lead type',
     ]
     _TRAV_START_COL = 5  # E
@@ -667,6 +707,13 @@ def write_board1_layout_sheet(
             return 'ukendt'
         return val
 
+    def _number_or_unknown(val):
+        """Return numeric value (excel-friendly) or 'ukendt' when unavailable."""
+        num = _to_number_or_none(val)
+        if num is None:
+            return 'ukendt'
+        return _as_excel_number(num)
+
     def _to_number_or_none(val):
         """Try parse a numeric value; return None when unavailable/non-numeric."""
         if val is None or (isinstance(val, float) and pd.isna(val)):
@@ -709,6 +756,74 @@ def write_board1_layout_sheet(
         score_ov_out = _as_excel_number(score_ov_num) if score_ov_num is not None else score_ov_raw
         return score_ns_out, score_ov_out
 
+    # Build score -> (freq pct NS, freq point ØV) lookup using the same recompute logic
+    # as frekvenstavlen, then reuse those values in the traveller table.
+    def _trav_hand_signature(row_obj) -> str | None:
+        n_hand = _get_field(row_obj, 'N_hand')
+        s_hand = _get_field(row_obj, 'S_hand')
+        o_hand = _get_field(row_obj, 'Ø_hand')
+        v_hand = _get_field(row_obj, 'V_hand')
+        parts = [n_hand, s_hand, o_hand, v_hand]
+        if any(p is None or (isinstance(p, float) and pd.isna(p)) for p in parts):
+            return None
+        out = [str(p).strip() for p in parts]
+        if any(not p for p in out):
+            return None
+        return '|'.join(out)
+
+    trav_current_signature = _trav_hand_signature(per_row)
+
+    if trav_current_signature is not None:
+        work_trav_freq = df.copy()
+        work_trav_freq['_deal_sig'] = work_trav_freq.apply(_trav_hand_signature, axis=1)
+        work_trav_freq = work_trav_freq[work_trav_freq['_deal_sig'] == trav_current_signature].copy()
+    else:
+        work_trav_freq = df_trav.copy()
+
+    if work_trav_freq.empty:
+        work_trav_freq = df_trav.copy()
+
+    trav_freq_lookup_by_score: dict[float, dict[str, float | int]] = {}
+    trav_freq_input_rows: list[dict] = []
+    for _, fr in work_trav_freq.iterrows():
+        score_ns_out, _score_ov_out = _mirrored_scores(fr)
+        score_ns_num = _to_number_or_none(score_ns_out)
+        trav_freq_input_rows.append({'score_ns_num': score_ns_num})
+
+    trav_freq_df = pd.DataFrame(trav_freq_input_rows)
+    trav_played_df = trav_freq_df[trav_freq_df['score_ns_num'].notna()].copy()
+    if not trav_played_df.empty:
+        trav_played_df['score_ns_num'] = pd.to_numeric(trav_played_df['score_ns_num'], errors='coerce')
+        trav_played_df = trav_played_df[trav_played_df['score_ns_num'].notna()].copy()
+        trav_played_df['score_ns_num'] = trav_played_df['score_ns_num'].astype(float)
+
+        score_counts = (
+            trav_played_df.groupby('score_ns_num', dropna=False)
+            .size()
+            .sort_index(ascending=True)
+        )
+
+        lower_counts_by_score: dict[float, int] = {}
+        lower_running = 0
+        for score_val, cnt in score_counts.items():
+            lower_counts_by_score[float(score_val)] = int(lower_running)
+            lower_running += int(cnt)
+
+        n_played = int(len(trav_played_df))
+        top_score = max(2 * (n_played - 1), 0)
+
+        for score_val in sorted(score_counts.index.tolist(), reverse=True):
+            score_key = float(score_val)
+            cnt = int(score_counts.loc[score_val])
+            lower_cnt = int(lower_counts_by_score.get(score_key, 0))
+            mp_ns = int(2 * lower_cnt + (cnt - 1))
+            mp_ov = int(top_score - mp_ns)
+            pct_ns = round((mp_ns / top_score) * 100.0, 2) if top_score > 0 else 50.0
+            trav_freq_lookup_by_score[score_key] = {
+                'pct_ns': pct_ns,
+                'point_ov': mp_ov,
+            }
+
     # Write header
     for i, header in enumerate(_TRAVELLER_HEADERS):
         cell = ws.cell(row=_TRAV_HEADER_ROW, column=_TRAV_START_COL + i, value=header)
@@ -730,6 +845,20 @@ def write_board1_layout_sheet(
         ns_txt = _pair_text(r, 'NS')
         ew_txt = _pair_text(r, 'EW')
         score_ns_val, score_ov_val = _mirrored_scores(r)
+        score_ns_key = _to_number_or_none(score_ns_val)
+
+        freq_pct_ns = None
+        freq_point_ov = None
+        if score_ns_key is not None:
+            freq_item = trav_freq_lookup_by_score.get(float(score_ns_key))
+            if isinstance(freq_item, dict):
+                freq_pct_ns = freq_item.get('pct_ns')
+                freq_point_ov = freq_item.get('point_ov')
+
+        if freq_pct_ns is None:
+            freq_pct_ns = _get_field(r, 'pct_NS', 'pct_ns')
+        if freq_point_ov is None:
+            freq_point_ov = _get_field(r, 'point_ØV', 'mp_ØV', 'imp_ØV', 'mp_ew', 'imp_ew')
 
         values_and_align = [
             (ns_txt, 'left'),
@@ -744,10 +873,24 @@ def write_board1_layout_sheet(
             (_get_field(r, 'point_ØV', 'mp_ØV', 'imp_ØV', 'mp_ew', 'imp_ew'), 'right'),
             (_get_field(r, 'pct_NS', 'pct_ns'), 'right'),
             (_get_field(r, 'pct_ØV', 'pct_EW', 'pct_ew'), 'right'),
-            (_pct_or_unknown(_pct_defense_from_row(r)), 'right'),
-            (_pct_or_unknown(_pct_decl_from_row(r)), 'right'),
+            (_pct_or_unknown(freq_pct_ns), 'right'),
+            (_number_or_unknown(freq_point_ov), 'right'),
             (_lead_type_text(r), 'left'),
         ]
+
+        row_level, row_strain = _contract_level_and_strain_from_row(r)
+        row_bucket = _contract_bucket(row_level, row_strain)
+        contract_fill = None
+        if predicted_strain is not None and row_strain is not None:
+            if row_level == predicted_level and row_strain == predicted_strain:
+                contract_fill = _CONTRACT_MATCH_GREEN
+            elif row_strain == predicted_strain:
+                if row_bucket != predicted_bucket:
+                    contract_fill = _CONTRACT_SAME_STRAIN_YELLOW
+                else:
+                    contract_fill = _CONTRACT_SAME_STRAIN_YELLOW
+            else:
+                contract_fill = _CONTRACT_OTHER_STRAIN_RED
 
         # Zebra + highlight
         fill = None
@@ -773,7 +916,12 @@ def write_board1_layout_sheet(
                 _write_with_red_suits(cell, val)
             else:
                 cell.value = val
-            _apply_data_style(cell, align=align, fill_color=fill)
+
+            cell_fill = fill
+            if cidx == 2 and contract_fill is not None:
+                cell_fill = contract_fill
+
+            _apply_data_style(cell, align=align, fill_color=cell_fill)
 
     # Column widths for traveller columns (tuned for reliable header readability)
     _TRAV_COL_WIDTHS = [28, 30, 12, 9, 10, 6, 12, 12, 10, 10, 8, 8, 11, 11, 28]

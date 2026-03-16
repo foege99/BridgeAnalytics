@@ -1820,6 +1820,56 @@ def test_mini_traveller_missing_pct_is_none():
     assert ws.cell(row=2, column=18).value == 'ukendt'   # Pt ØV (frekv)
 
 
+def test_mini_traveller_contract_cell_colored_by_match_against_possible_bidding():
+    """Traveller contract cell should be green/yellow/red by match vs predicted final contract."""
+    base = {
+        'dealer': 'N',
+        # This setup leads to final predicted contract 3♠ in the scaffold auction.
+        'N_hand': 'AKQJ9.8765.3.K2',
+        'section': 'A',
+        'row': 'A',
+    }
+
+    df_match = _make_df(
+        **base,
+        ns1=PER,
+        ns2='Partner X',
+        ew1='Opp East',
+        ew2='Opp West',
+        contract='3♠',
+    )
+    df_same_strain = _make_df(
+        **base,
+        ns1='Pair2 N',
+        ns2='Pair2 S',
+        ew1='Pair2 E',
+        ew2='Pair2 V',
+        contract='4♠',
+    )
+    df_other_strain = _make_df(
+        **base,
+        ns1='Pair3 N',
+        ns2='Pair3 S',
+        ew1='Pair3 E',
+        ew2='Pair3 V',
+        contract='3NT',
+    )
+    df = pd.concat([df_match, df_same_strain, df_other_strain], ignore_index=True)
+
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # Contract column is G (E=5, Kontrakt index 2).
+    green_rgb = str(ws.cell(row=2, column=7).fill.fgColor.rgb or '')
+    yellow_rgb = str(ws.cell(row=3, column=7).fill.fgColor.rgb or '')
+    red_rgb = str(ws.cell(row=4, column=7).fill.fgColor.rgb or '')
+
+    assert green_rgb.endswith('EAF4E3')
+    assert yellow_rgb.endswith('FFF2CC')
+    assert red_rgb.endswith('F8D7DA')
+
+
 # ---------------------------------------------------------------------------
 # Tests for Double Dummy table (E5:K9)
 # ---------------------------------------------------------------------------

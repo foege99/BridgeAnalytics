@@ -1,0 +1,410 @@
+system_library:
+
+  nordic_natural_core:
+
+    meta:
+      _schema_version: "1.0"
+      version: "1.0"
+      description: >
+        Overlay for the v1.0 schema. Unchanged sections are inherited from the
+        legacy systemdefinition.yaml; competitive bidding is migrated to a
+        context/node structure and normalized by the Python compatibility layer.
+
+    opening_model:
+
+      schema: context_node_rules
+
+      contexts:
+
+        decision_flow:
+
+          nodes:
+
+            first_round_opening:
+              steps:
+                - id: evaluate_opening_threshold
+                - id: evaluate_2C_opening
+                - id: evaluate_2NT_opening
+                - id: evaluate_1NT_opening
+                - id: evaluate_major_opening
+                - id: evaluate_minor_opening
+                - id: evaluate_weak_two_openings
+                - id: evaluate_2D_special_opening
+                - id: evaluate_three_level_preempts
+                - id: evaluate_3NT_opening
+                - id: evaluate_four_level_preempts
+                - id: if_no_opening_then_pass
+
+    competitive_bidding:
+
+      schema: context_node_rules
+
+      contexts:
+
+        doubles:
+
+          interpretation_priority:
+            description: >
+              Priority for interpreting doubles in competitive auctions.
+              Applies in all seats when a double is available.
+            order:
+              - lead_directing_after_artificial_opponent_call
+              - takeout_when_partner_unbid_or_only_passed
+              - negative_when_partner_has_contract_bid
+              - penalty_as_fallback
+
+          nodes:
+
+            lead_directing:
+              enabled_by_profile_flag: true
+
+              applicability:
+                artificial_calls_only: true
+                require_named_suit: true
+                excluded_strains: [NT]
+
+              interpretation:
+                lead_requested: doubled_call_suit
+
+              exceptions:
+                natural_one_club_opening_double:
+                  sequence: "(1C)-X"
+                  if_1C_is_natural: true
+                  meaning: takeout_double
+                artificial_notrump_calls:
+                  condition: doubled_call_strain == NT
+                  meaning: not_lead_directing
+
+            takeout:
+              description: "Classic takeout double showing support for unbid suits"
+
+              minimum_strength:
+                hcp_min: 12
+
+              shape_requirements:
+                shortness_in_opponents_suit: preferred
+                support_for_unbid_suits: required
+
+              typical_support_patterns:
+                after_1C:
+                  expected_support_for: [diamonds, hearts, spades]
+                after_1D:
+                  expected_support_for: [clubs, hearts, spades]
+                after_1H:
+                  expected_support_for: [spades, clubs, diamonds]
+                after_1S:
+                  expected_support_for: [hearts, clubs, diamonds]
+
+              rebid_structure:
+                pass_after_partner_bid:
+                  meaning: "Minimum takeout double"
+                simple_raise_of_partner_suit:
+                  meaning: "Support with minimum values"
+                  strength:
+                    hcp_range: [12,16]
+                new_suit_rebid:
+                  meaning: "Stronger hand after takeout double"
+                  strength:
+                    hcp_min: 17
+                  forcing: one_round
+                jump_new_suit:
+                  meaning: "Very strong hand with good suit"
+                  strength:
+                    hcp_min: 18
+                  forcing: strong
+                rebid_2NT:
+                  meaning: "Strong balanced hand"
+                  strength:
+                    hcp_range: [18,19]
+                  stopper_required: true
+                cuebid_opponents_suit:
+                  meaning: "Strong hand asking partner to further describe"
+                  forcing: true
+
+            negative:
+              enabled: true
+              applies_up_to:
+                level: "2S"
+              minimum_strength:
+                hcp_min: 6
+              general_principle:
+                description: >
+                  Negative double by responder after opener's one-level opening and opponent's overcall.
+                  Shows values and usually interest in one or more unbid suits, especially majors.
+                  It is not primarily penalty-oriented.
+
+              standard_interpretations:
+                "1C-(1D)-X":
+                  shows: [hearts_4plus, spades_4plus]
+                "1C-(1H)-X":
+                  shows: [spades_4plus]
+                  may_also_contain: [diamonds_tolerance]
+                "1C-(1S)-X":
+                  shows: [hearts_4plus]
+                  may_also_contain: [diamonds_tolerance]
+                "1D-(1H)-X":
+                  shows: [spades_4plus]
+                  may_also_contain: [clubs_tolerance]
+                "1D-(1S)-X":
+                  shows: [hearts_4plus]
+                  may_also_contain: [clubs_tolerance]
+                "1H-(1S)-X":
+                  shows: [minors_interest]
+                  may_also_contain: [stronger_hand_without_clean_natural_bid]
+                "1S-(2H)-X":
+                  shows: [minors_interest]
+                  may_also_contain: [stronger_hand_without_clean_natural_bid]
+
+            penalty:
+              sacrifice_evaluation:
+                description: >
+                  Bidding-time model for deciding between doubling a competitive sacrifice
+                  and bidding on. No double-dummy data is used — all inference comes from
+                  the auction alone (own hand + ranges inferred from partner's and opponents'
+                  bids). Three techniques are combined:
+                  (1) Vulnerability thresholds (the classic 3/2/1 rule).
+                  (2) HCP-balance: NS HCP from bids → EW HCP = 40 − NS → expected EW tricks.
+                  (3) LoTT: inferred NS + EW trump totals ≈ total available tricks.
+
+                sacrifice_detection:
+                  description: >
+                    A sacrifice situation exists when our side likely has a making contract
+                    but opponents have outbid us at a high level.
+                  own_game_likely_when:
+                    estimated_combined_ns_hcp_min: 25
+                  suspect_sacrifice_when:
+                    opp_level_min: 4
+                    own_game_likely: true
+
+                opponent_trick_estimation:
+                  description: >
+                    Estimate how many tricks opponents will take, using only bid-inferred data.
+                    Formula: floor(opp_inferred_hcp / 3) + suit_length_bonus.
+                    opp_inferred_hcp = 40 − own_hcp − partner_hcp_mid_from_bid.
+                  partner_hcp_inference_by_bid:
+                    "1NT": {low: 15, high: 17, mid: 16}
+                    "2NT": {low: 20, high: 21, mid: 20}
+                    "1X": {low: 12, high: 18, mid: 15}
+                    "2C_strong": {low: 17, high: 24, mid: 20}
+                    "2X_weak": {low: 6, high: 10, mid: 8}
+                    "3X_preempt": {low: 5, high: 10, mid: 7}
+                    "PASS": {low: 0, high: 11, mid: 6}
+                  suit_length_bonus:
+                    opp_suit_length_7: 1
+                    opp_suit_length_8plus: 2
+
+                doubled_sacrifice_profitable_vs_game:
+                  description: >
+                    A sacrifice at game-level or above is only profitable (for the sacrificers)
+                    when they go down no more than this many tricks doubled.
+                    For us as doublers: double only when we expect them to go down more than
+                    these limits.
+                  max_undertricks_for_sacrifice_to_break_even:
+                    favorable_vulnerability: 3
+                    equal_vulnerability: 2
+                    unfavorable_vulnerability: 1
+
+                doubled_sacrifice_profitable_vs_slam:
+                  max_undertricks_for_sacrifice_to_break_even:
+                    favorable_vulnerability: 6
+                    equal_both_vul: 5
+                    equal_both_not_vul: 4
+                    unfavorable_vulnerability: 3
+
+                five_level_principle:
+                  description: >
+                    The five-level belongs to the opponents. Competing 5-over-5 almost never gains.
+                  avoid_five_over_five: true
+                  exception: extreme_void_combined_with_distributional_inference
+
+        overcalls:
+
+          natural:
+            one_level:
+              description: "Natural overcall at the one level"
+              strength:
+                hcp_range: [8,16]
+              suit_length:
+                minimum: 5
+              notes:
+                - "Good suit quality expected"
+                - "May be slightly lighter in favorable vulnerability"
+
+            two_level:
+              description: "Natural overcall at the two level"
+              strength:
+                hcp_range: [10,16]
+              suit_length:
+                minimum: 5
+
+            jump:
+              description: "Weak jump overcall"
+              strength:
+                hcp_range: [6,10]
+              suit_length:
+                minimum: 6
+              type: preemptive
+
+            one_notrump:
+              description: "Natural 1NT overcall"
+              strength:
+                hcp_range: [15,18]
+              shape: balanced
+              requirements:
+                stopper_in_opponents_suit: true
+
+          cuebid:
+            style: michaels
+            description: "Treatment-aware Michaels over minor openings"
+
+            michaels:
+
+              default_strength:
+                hcp_range: [8,16]
+
+              over_minor_openings:
+
+                by_opponent_minor_treatment:
+
+                  short_club_2plus:
+                    over_1C:
+                      "2C":
+                        type: natural_overcall
+                        shows: [clubs]
+                        suit_length:
+                          minimum: 6
+                        strength:
+                          hcp_range: [8,16]
+                        description: "Natural overcall when 1C may be short (down to 2 cards)"
+                      "2D":
+                        type: michaels_cuebid
+                        shows: [hearts, spades]
+                        strength:
+                          hcp_range: [8,16]
+
+                    over_1D:
+                      "2D":
+                        type: michaels_cuebid
+                        shows: [hearts, spades]
+                        strength:
+                          hcp_range: [8,16]
+
+                  best_minor_3plus:
+                    over_1C:
+                      "2C":
+                        type: michaels_cuebid
+                        shows: [hearts, spades]
+                        strength:
+                          hcp_range: [8,16]
+
+                    over_1D:
+                      "2D":
+                        type: michaels_cuebid
+                        shows: [hearts, spades]
+                        strength:
+                          hcp_range: [8,16]
+
+              after_major_opening:
+                shows: [other_major, unspecified_minor]
+                strength:
+                  hcp_range: [8,16]
+
+              advancer_responses:
+
+                after_michaels_over_minor:
+                  "2H":
+                    meaning: preference_to_hearts
+                    forcing: false
+                  "2S":
+                    meaning: preference_to_spades
+                    forcing: false
+                  "2NT":
+                    meaning: invitational_plus_with_major_fit
+                    forcing: one_round
+                  raise_known_major:
+                    meaning: constructive_or_better_support
+                  jump_to_game:
+                    meaning: to_play_with_fit
+
+                after_michaels_over_major:
+                  "2NT":
+                    meaning: asks_for_minor
+                    forcing: one_round
+
+                  over_2NT_ask:
+                    "3C":
+                      meaning: clubs
+                    "3D":
+                      meaning: diamonds
+
+        raises:
+          cue_raise_after_overcall:
+            enabled: true
+            strength:
+              hcp_min: 10
+            support:
+              minimum_trumps: 3
+            meaning:
+              type: artificial_raise
+              forcing: one_round
+
+        responses:
+          takeout_double:
+            default_style:
+              description: >
+                Standard responses to takeout double without Jordan 2NT.
+                Cuebid of opponent's suit shows 12+ HCP and game interest
+                when responder has no clearer natural call.
+
+            new_suit_response:
+              principle:
+                show_longest_unbid_suit: true
+              preferred_length:
+                cards: 4
+              minimum_possible:
+                cards: 3
+              strength:
+                hcp_range: [0,7]
+              forcing: false
+
+            jump_new_suit:
+              meaning: invitational
+              hcp_range: [8,11]
+              suit_length_min: 4
+              forcing: one_round
+
+            notrump_responses_default:
+              "1NT":
+                meaning: natural
+                hcp_range: [6,9]
+                stopper_in_opponent_suit: true
+                shape: balanced
+              "2NT":
+                meaning: natural
+                hcp_range: [10,12]
+                stopper_in_opponent_suit: true
+                shape: balanced
+              "3NT":
+                meaning: natural
+                hcp_range: [13,15]
+                stopper_in_opponent_suit: true
+                shape: balanced
+
+            cuebid_of_opponents_suit:
+              meaning: strong_hand_without_clear_natural_bid
+              hcp_min: 12
+              forcing: one_round
+              game_interest: true
+
+            jordan_2nt_mode:
+              enabled_by_profile_flag: true
+              applies_when:
+                sequence: "opponent_opening - takeout_double - raise_of_opening_suit"
+              "2NT":
+                meaning: jordan_raise
+                support_min: 4
+                hcp_min: 10
+                forcing: one_round
+                artificial: true
+              notes:
+                - "When Jordan 2NT is enabled, 2NT is no longer natural in this position"

@@ -71,15 +71,135 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _mapping_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _deep_merge_dicts(base: Any, overlay: Any) -> dict[str, Any]:
+    base_map = _mapping_dict(base)
+    overlay_map = _mapping_dict(overlay)
+    if not base_map:
+        return dict(overlay_map)
+    if not overlay_map:
+        return dict(base_map)
+
+    out = dict(base_map)
+    for key, overlay_value in overlay_map.items():
+        base_value = out.get(key)
+        if isinstance(base_value, Mapping) and isinstance(overlay_value, Mapping):
+            out[key] = _deep_merge_dicts(base_value, overlay_value)
+        else:
+            out[key] = overlay_value
+    return out
+
+
+def _system_library_from_raw(raw_sysdef: Any) -> dict[str, Any]:
+    sys_lib = (_mapping_dict(raw_sysdef).get("system_library", {}) or {})
+    return _mapping_dict(sys_lib)
+
+
+def _systemdefinition_schema_version(raw_sysdef: Any) -> str:
+    sys_lib = _system_library_from_raw(raw_sysdef)
+    if not sys_lib:
+        return "0.9"
+
+    first_name = next(iter(sys_lib.keys()), None)
+    first_sys = _mapping_dict(sys_lib.get(first_name)) if first_name is not None else {}
+    meta = _mapping_dict(first_sys.get("meta"))
+
+    version = str(
+        meta.get("_schema_version")
+        or meta.get("schema_version")
+        or meta.get("version")
+        or "0.9"
+    ).strip()
+    return version or "0.9"
+
+
+def _validate_systemdefinition_file(raw_sysdef: Any, source_name: str) -> list[str]:
+    warnings: list[str] = []
+    sys_lib = _system_library_from_raw(raw_sysdef)
+    if not sys_lib:
+        return [f"{source_name}: mangler system_library eller kunne ikke indlaeses som mapping."]
+
+    runtime_required = (
+        "meta",
+        "shape_definitions",
+        "opening_threshold_profiles",
+        "threshold_rule_definitions",
+        "notrump_openings",
+        "major_opening_logic",
+        "minor_opening_logic",
+        "one_nt_response_system",
+        "hand_strength_model",
+        "competitive_bidding",
+    )
+
+    for sys_name, raw_sys in sys_lib.items():
+        sys_def = _mapping_dict(raw_sys)
+        if not sys_def:
+            warnings.append(f"{source_name}:{sys_name} er ikke et mapping.")
+            continue
+
+        for key in runtime_required:
+            if key not in sys_def:
+                warnings.append(f"{source_name}:{sys_name} mangler runtime-noeglen '{key}'.")
+
+        flow = sys_def.get("opening_decision_flow")
+        if flow is not None and not isinstance(flow, list):
+            warnings.append(f"{source_name}:{sys_name} har opening_decision_flow i ugyldigt format.")
+
+        opening_model = sys_def.get("opening_model")
+        if opening_model is not None and not isinstance(opening_model, Mapping):
+            warnings.append(f"{source_name}:{sys_name} har opening_model i ugyldigt format.")
+
+        competitive = sys_def.get("competitive_bidding")
+        if competitive is not None and not isinstance(competitive, Mapping):
+            warnings.append(f"{source_name}:{sys_name} har competitive_bidding i ugyldigt format.")
+
+    return warnings
+
+
+def _use_systemdefinition_v2(bundle: Mapping[str, Any]) -> bool:
+    match_cfg = _mapping_dict(_mapping_dict(bundle.get("match_config")).get("match_config"))
+    return bool(match_cfg.get("use_systemdefinition_v2")) and bool(bundle.get("systemdefinition_v2"))
+
+
+def _active_systemdefinition_from_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
+    if _use_systemdefinition_v2(bundle):
+        return _mapping_dict(bundle.get("systemdefinition_v2_merged") or bundle.get("systemdefinition_v2"))
+    return _mapping_dict(bundle.get("systemdefinition"))
+
+
 @lru_cache(maxsize=1)
 def _load_bundle() -> dict[str, Any]:
     base = Path(__file__).resolve().parent
-    return {
-        "systemdefinition": _load_yaml_file(base / "systemdefinition.yaml"),
-        "system_profiles": _load_yaml_file(base / "system_profiles.yaml"),
-        "match_config": _load_yaml_file(base / "match_config.yaml"),
-        "pair_registry": _load_yaml_file(base / "pair_registry.yaml"),
+    raw_systemdefinition = _load_yaml_file(base / "systemdefinition.yaml")
+    raw_systemdefinition_v2 = _load_yaml_file(base / "systemdefinition_v2.yaml")
+    merged_systemdefinition_v2 = _deep_merge_dicts(raw_systemdefinition, raw_systemdefinition_v2)
+    system_profiles = _load_yaml_file(base / "system_profiles.yaml")
+    match_config = _load_yaml_file(base / "match_config.yaml")
+    pair_registry = _load_yaml_file(base / "pair_registry.yaml")
+
+    out = {
+        "systemdefinition": raw_systemdefinition,
+        "systemdefinition_v2": raw_systemdefinition_v2,
+        "systemdefinition_v2_merged": merged_systemdefinition_v2,
+        "system_profiles": system_profiles,
+        "match_config": match_config,
+        "pair_registry": pair_registry,
     }
+
+    warnings = _validate_systemdefinition_file(raw_systemdefinition, "systemdefinition.yaml")
+    if raw_systemdefinition_v2:
+        warnings.extend(_validate_systemdefinition_file(merged_systemdefinition_v2, "systemdefinition_v2.yaml"))
+
+    active_systemdefinition = _active_systemdefinition_from_bundle(out)
+    out["systemdefinition_active"] = active_systemdefinition
+    out["systemdefinition_schema_version"] = _systemdefinition_schema_version(active_systemdefinition)
+    out["migration_warnings"] = tuple(warnings)
+
+    return out
 
 
 def _shape_matches(shape_shdc: tuple[int, int, int, int], allowed_shapes: list[Any]) -> bool:
@@ -149,7 +269,8 @@ def _pick_profile(dealer: str, bundle: dict[str, Any]) -> tuple[str | None, dict
 
 
 def _pick_system_def(profile_cfg: dict[str, Any], bundle: dict[str, Any]) -> dict[str, Any]:
-    sys_lib = (bundle.get("systemdefinition", {}) or {}).get("system_library", {}) or {}
+    active_sysdef = _active_systemdefinition_from_bundle(bundle)
+    sys_lib = _system_library_from_raw(active_sysdef or bundle.get("systemdefinition_active") or bundle.get("systemdefinition"))
     if not sys_lib:
         return {}
 
@@ -328,6 +449,68 @@ def _evaluate_suit_opening(
     return None, None, f"{label}-check: ingen regel matchede."
 
 
+def _opening_flow_step_name(raw_step: Any) -> str | None:
+    if isinstance(raw_step, str):
+        step = raw_step.strip()
+        return step or None
+
+    step_map = _mapping_dict(raw_step)
+    if not step_map:
+        return None
+
+    for key in ("step", "action", "id", "name"):
+        val = step_map.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return None
+
+
+def _opening_flow_steps_from_list(raw_steps: Any) -> list[str]:
+    if not isinstance(raw_steps, list):
+        return []
+    out: list[str] = []
+    for raw_step in raw_steps:
+        step = _opening_flow_step_name(raw_step)
+        if step is not None:
+            out.append(step)
+    return out
+
+
+def _opening_decision_flow_steps(sys_def: Mapping[str, Any]) -> list[str]:
+    default_steps = [
+        "evaluate_opening_threshold",
+        "evaluate_1NT_opening",
+        "evaluate_major_opening",
+        "evaluate_minor_opening",
+        "if_no_opening_then_pass",
+    ]
+
+    sys_map = _mapping_dict(sys_def)
+
+    # v1.0-style flow (context/node model) takes precedence when present.
+    opening_model = _mapping_dict(sys_map.get("opening_model"))
+    contexts = _mapping_dict(opening_model.get("contexts"))
+    for ctx_key in ("decision_flow", "opening_flow", "first_round"):
+        ctx = _mapping_dict(contexts.get(ctx_key))
+        steps = _opening_flow_steps_from_list(ctx.get("steps"))
+        if steps:
+            return steps
+
+        nodes = _mapping_dict(ctx.get("nodes"))
+        for node in nodes.values():
+            node_map = _mapping_dict(node)
+            steps = _opening_flow_steps_from_list(node_map.get("steps"))
+            if steps:
+                return steps
+
+    # Legacy flow list.
+    legacy_steps = _opening_flow_steps_from_list(sys_map.get("opening_decision_flow"))
+    if legacy_steps:
+        return legacy_steps
+
+    return list(default_steps)
+
+
 def suggest_opening_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
     """Suggest dealer's first call using YAML system + profile settings."""
     dealer = _normalize_seat(row.get("dealer"))
@@ -390,91 +573,117 @@ def suggest_opening_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
             ],
         }
 
-    threshold_ok, threshold_line = _evaluate_opening_threshold(ctx, profile_cfg, sys_def)
-    log_lines.append(threshold_line)
-    if not threshold_ok:
-        return {
-            "dealer": dealer,
-            "profile": profile_name,
-            "bid": "PASS",
-            "display_bid": "PAS",
-            "rule_id": "threshold_fail",
-            "explanation": "Åbningstærskel ikke opfyldt.",
-            "log_lines": log_lines + [
-                "Valg: PAS",
-                "Regel-id: threshold_fail",
-                "Forklaring: Åbningstærskel ikke opfyldt.",
-            ],
-        }
+    for flow_step in _opening_decision_flow_steps(sys_def):
+        step = str(flow_step).strip().lower()
 
-    nt_bid, nt_rule, nt_line = _evaluate_one_nt(ctx, profile_cfg, sys_def)
-    log_lines.append(nt_line)
-    if nt_bid:
-        display = _to_display_bid(nt_bid)
-        return {
-            "dealer": dealer,
-            "profile": profile_name,
-            "bid": nt_bid,
-            "display_bid": display,
-            "rule_id": nt_rule,
-            "explanation": "1NT opfylder styrke-, form- og profilkrav.",
-            "log_lines": log_lines + [
-                "Major-check: ikke vurderet (1NT valgt).",
-                "Minor-check: ikke vurderet (1NT valgt).",
-                f"Valg: {display}",
-                f"Regel-id: {nt_rule}",
-                "Forklaring: 1NT opfylder styrke-, form- og profilkrav.",
-            ],
-        }
+        if step == "evaluate_opening_threshold":
+            threshold_ok, threshold_line = _evaluate_opening_threshold(ctx, profile_cfg, sys_def)
+            log_lines.append(threshold_line)
+            if not threshold_ok:
+                return {
+                    "dealer": dealer,
+                    "profile": profile_name,
+                    "bid": "PASS",
+                    "display_bid": "PAS",
+                    "rule_id": "threshold_fail",
+                    "explanation": "Åbningstærskel ikke opfyldt.",
+                    "log_lines": log_lines + [
+                        "Valg: PAS",
+                        "Regel-id: threshold_fail",
+                        "Forklaring: Åbningstærskel ikke opfyldt.",
+                    ],
+                }
+            continue
 
-    major_bid, major_rule, major_line = _evaluate_suit_opening(
-        ctx,
-        profile_cfg,
-        sys_def,
-        logic_key="major_opening_logic",
-        style_key="major_style",
-    )
-    log_lines.append(major_line)
-    if major_bid:
-        display = _to_display_bid(major_bid)
-        return {
-            "dealer": dealer,
-            "profile": profile_name,
-            "bid": major_bid,
-            "display_bid": display,
-            "rule_id": major_rule,
-            "explanation": "Naturlig major-åbning valgt fra profilregler.",
-            "log_lines": log_lines + [
-                "Minor-check: ikke vurderet (major valgt).",
-                f"Valg: {display}",
-                f"Regel-id: {major_rule}",
-                "Forklaring: Naturlig major-åbning valgt fra profilregler.",
-            ],
-        }
+        if step in ("evaluate_1nt_opening", "evaluate_one_nt_opening"):
+            nt_bid, nt_rule, nt_line = _evaluate_one_nt(ctx, profile_cfg, sys_def)
+            log_lines.append(nt_line)
+            if nt_bid:
+                display = _to_display_bid(nt_bid)
+                return {
+                    "dealer": dealer,
+                    "profile": profile_name,
+                    "bid": nt_bid,
+                    "display_bid": display,
+                    "rule_id": nt_rule,
+                    "explanation": "1NT opfylder styrke-, form- og profilkrav.",
+                    "log_lines": log_lines + [
+                        "Major-check: ikke vurderet (1NT valgt).",
+                        "Minor-check: ikke vurderet (1NT valgt).",
+                        f"Valg: {display}",
+                        f"Regel-id: {nt_rule}",
+                        "Forklaring: 1NT opfylder styrke-, form- og profilkrav.",
+                    ],
+                }
+            continue
 
-    minor_bid, minor_rule, minor_line = _evaluate_suit_opening(
-        ctx,
-        profile_cfg,
-        sys_def,
-        logic_key="minor_opening_logic",
-        style_key="minor_style",
-    )
-    log_lines.append(minor_line)
-    if minor_bid:
-        display = _to_display_bid(minor_bid)
-        return {
-            "dealer": dealer,
-            "profile": profile_name,
-            "bid": minor_bid,
-            "display_bid": display,
-            "rule_id": minor_rule,
-            "explanation": "Naturlig minor-åbning valgt fra profilregler.",
-            "log_lines": log_lines + [
-                f"Valg: {display}",
-                f"Regel-id: {minor_rule}",
-                "Forklaring: Naturlig minor-åbning valgt fra profilregler.",
-            ],
-        }
+        if step == "evaluate_major_opening":
+            major_bid, major_rule, major_line = _evaluate_suit_opening(
+                ctx,
+                profile_cfg,
+                sys_def,
+                logic_key="major_opening_logic",
+                style_key="major_style",
+            )
+            log_lines.append(major_line)
+            if major_bid:
+                display = _to_display_bid(major_bid)
+                return {
+                    "dealer": dealer,
+                    "profile": profile_name,
+                    "bid": major_bid,
+                    "display_bid": display,
+                    "rule_id": major_rule,
+                    "explanation": "Naturlig major-åbning valgt fra profilregler.",
+                    "log_lines": log_lines + [
+                        "Minor-check: ikke vurderet (major valgt).",
+                        f"Valg: {display}",
+                        f"Regel-id: {major_rule}",
+                        "Forklaring: Naturlig major-åbning valgt fra profilregler.",
+                    ],
+                }
+            continue
+
+        if step == "evaluate_minor_opening":
+            minor_bid, minor_rule, minor_line = _evaluate_suit_opening(
+                ctx,
+                profile_cfg,
+                sys_def,
+                logic_key="minor_opening_logic",
+                style_key="minor_style",
+            )
+            log_lines.append(minor_line)
+            if minor_bid:
+                display = _to_display_bid(minor_bid)
+                return {
+                    "dealer": dealer,
+                    "profile": profile_name,
+                    "bid": minor_bid,
+                    "display_bid": display,
+                    "rule_id": minor_rule,
+                    "explanation": "Naturlig minor-åbning valgt fra profilregler.",
+                    "log_lines": log_lines + [
+                        f"Valg: {display}",
+                        f"Regel-id: {minor_rule}",
+                        "Forklaring: Naturlig minor-åbning valgt fra profilregler.",
+                    ],
+                }
+            continue
+
+        if step == "if_no_opening_then_pass":
+            return {
+                "dealer": dealer,
+                "profile": profile_name,
+                "bid": "PASS",
+                "display_bid": "PAS",
+                "rule_id": "no_opening_rule_matched",
+                "explanation": "Ingen åbning matchede; bruger PAS.",
+                "log_lines": log_lines + [
+                    "Valg: PAS",
+                    "Regel-id: no_opening_rule_matched",
+                    "Forklaring: Ingen åbning matchede; bruger PAS.",
+                ],
+            }
 
     return {
         "dealer": dealer,
@@ -544,8 +753,79 @@ def _is_two_over_one_gf_enabled_for_seat(seat: str) -> bool:
 
 def _competitive_bidding_for_seat(seat: str) -> dict[str, Any]:
     sys_def = _system_def_for_seat(seat)
-    out = (sys_def.get("competitive_bidding", {}) or {}) if isinstance(sys_def, Mapping) else {}
-    return out if isinstance(out, Mapping) else {}
+    raw = (sys_def.get("competitive_bidding", {}) or {}) if isinstance(sys_def, Mapping) else {}
+    out = _mapping_dict(raw)
+    contexts = _mapping_dict(out.get("contexts"))
+    if not contexts:
+        return out
+
+    legacy: dict[str, Any] = {}
+
+    doubles = _mapping_dict(contexts.get("doubles"))
+    if doubles:
+        interpretation_priority = _mapping_dict(doubles.get("interpretation_priority"))
+        if interpretation_priority:
+            legacy["doubles_interpretation_priority"] = interpretation_priority
+
+        double_nodes = _mapping_dict(doubles.get("nodes"))
+        if double_nodes:
+            lead_directing = _mapping_dict(double_nodes.get("lead_directing"))
+            if lead_directing:
+                legacy["lead_directing_double_system"] = lead_directing
+
+            takeout = _mapping_dict(double_nodes.get("takeout"))
+            if takeout:
+                legacy["takeout_double"] = takeout
+
+            negative = _mapping_dict(double_nodes.get("negative"))
+            if negative:
+                legacy["negative_double_system"] = negative
+
+            penalty = _mapping_dict(double_nodes.get("penalty"))
+            if penalty:
+                sacrifice_eval = _mapping_dict(penalty.get("sacrifice_evaluation"))
+                if sacrifice_eval:
+                    legacy["sacrifice_evaluation"] = sacrifice_eval
+
+    overcalls_ctx = _mapping_dict(contexts.get("overcalls"))
+    if overcalls_ctx:
+        overcalls: dict[str, Any] = {}
+        natural = _mapping_dict(overcalls_ctx.get("natural"))
+        if natural:
+            one_level = _mapping_dict(natural.get("one_level"))
+            if one_level:
+                overcalls["one_level_overcall"] = one_level
+
+            two_level = _mapping_dict(natural.get("two_level"))
+            if two_level:
+                overcalls["two_level_overcall"] = two_level
+
+            jump = _mapping_dict(natural.get("jump"))
+            if jump:
+                overcalls["jump_overcall"] = jump
+
+            one_notrump = _mapping_dict(natural.get("one_notrump"))
+            if one_notrump:
+                overcalls["one_nt_overcall"] = one_notrump
+
+        cuebid = _mapping_dict(overcalls_ctx.get("cuebid"))
+        if cuebid:
+            overcalls["cuebid_overcall"] = cuebid
+
+        if overcalls:
+            legacy["overcalls"] = overcalls
+
+    raises = _mapping_dict(contexts.get("raises"))
+    cue_raise = _mapping_dict(raises.get("cue_raise_after_overcall"))
+    if cue_raise:
+        legacy["cue_raise_after_overcall"] = cue_raise
+
+    responses = _mapping_dict(contexts.get("responses"))
+    takeout_responses = _mapping_dict(responses.get("takeout_double"))
+    if takeout_responses:
+        legacy["responses_to_takeout_double"] = takeout_responses
+
+    return legacy
 
 
 def _takeout_double_min_hcp_for_seat(seat: str) -> int:
@@ -1224,6 +1504,183 @@ def _is_artificial_call(call: Mapping[str, Any] | None) -> bool:
     return ("kunstig" in expl) or ("artificial" in expl)
 
 
+# ---------------------------------------------------------------------------
+# Sacrifice / penalty-double scoring helpers (no DD — all from bid inference)
+# ---------------------------------------------------------------------------
+
+def _partner_hcp_mid_from_calls(prior_calls: list[Mapping[str, Any]], partner_seat: str) -> float:
+    """Return the mid-point HCP estimate for partner based on their first contract bid.
+
+    No hidden-card knowledge is used — only the bid string and rule_id are consulted.
+    """
+    for call in prior_calls:
+        cseat = _normalize_seat(call.get("dealer"))
+        if cseat != partner_seat:
+            continue
+        bid = str(call.get("bid") or "PASS").upper().strip()
+        rid = str(call.get("rule_id") or "").lower()
+        if bid in ("PASS", "PAS", "X", "XX"):
+            continue
+        parsed = _parse_contract_bid(bid)
+        if parsed is None:
+            continue
+        level, strain = parsed
+        # 1NT / 2NT range lookups
+        if strain == "NT":
+            if level == 1:
+                return 16.0   # 1NT = 15-17
+            if level == 2:
+                return 20.5   # 2NT = 20-21
+            if level == 3:
+                return 26.0   # 3NT natural = strong
+        # 2C strong opening
+        if level == 2 and strain == "C" and "strong" in rid:
+            return 20.0
+        # Weak two or preempt
+        if level >= 2 and ("weak" in rid or "preempt" in rid):
+            return 7.5   # weak 6-10 HCP
+        if level == 3:
+            return 7.5   # 3-level preempt
+        if level == 4:
+            return 7.5   # 4-level preempt
+        # One-level opening
+        if level == 1:
+            return 14.0  # 1X = solid ~12-18 → mid ~14-15
+    # Partner has only passed
+    return 6.0
+
+
+def _doubled_undertrick_score(undertricks: int, opp_vulnerable: bool) -> int:
+    """Standard duplicate bridge doubled undertrick penalties."""
+    if undertricks <= 0:
+        return 0
+    if not opp_vulnerable:
+        # -100, -300, -500, -800, -1100, -1400 ...
+        if undertricks == 1:
+            return 100
+        if undertricks == 2:
+            return 300
+        if undertricks == 3:
+            return 500
+        return 500 + (undertricks - 3) * 300
+    else:
+        # -200, -500, -800, -1100, -1400 ...
+        if undertricks == 1:
+            return 200
+        if undertricks == 2:
+            return 500
+        return 500 + (undertricks - 2) * 300
+
+
+def _our_likely_game_score(ns_combined_hcp: float, ns_vulnerable: bool) -> int:
+    """Rough duplicate score for our expected best game (HCP-based).
+
+    Returns the expected score we would earn if we play and make our game.
+    """
+    base = 420 if ns_vulnerable else 400   # ~4M / 3NT makeweight
+    # Slam bonus: very rough
+    if ns_combined_hcp >= 33:
+        return 1430 if ns_vulnerable else 980   # small slam
+    if ns_combined_hcp >= 26:
+        return base
+    # Part score territory
+    return 110 if ns_vulnerable else 90
+
+
+def _estimate_opp_tricks_from_bids(
+    opp_inferred_hcp: float,
+    opp_suit_length: int,
+    opp_level: int,
+) -> float:
+    """Estimate opponent tricks from bid-inferred information only.
+
+    Uses the HCP-to-tricks rule-of-thumb + suit-length bonus.
+    """
+    hcp_tricks = 6.0 + (opp_inferred_hcp - 20.0) / 3.0   # ~6 tricks at 20 HCP
+    hcp_tricks = max(hcp_tricks, float(opp_level + 1))     # they wouldn't bid without some hope
+
+    # Suit-length bonus: a long solid suit adds a trick or two
+    suit_bonus = 0.0
+    if opp_suit_length >= 8:
+        suit_bonus = 2.0
+    elif opp_suit_length >= 7:
+        suit_bonus = 1.0
+
+    return hcp_tricks + suit_bonus
+
+
+def _sacrifice_double_is_better(
+    ctx: dict[str, Any],
+    prior_calls: list[Mapping[str, Any]],
+    seat: str,
+    opp_level: int,
+    opp_strain: str,
+    vulnerability: str,
+    opp_suit_length: int,
+) -> tuple[bool, str]:
+    """Decide whether doubling a (likely sacrifice) contract beats bidding on.
+
+    Returns (should_double: bool, reasoning: str).
+    All inference is from the auction — no DD data is used.
+    """
+    ns_vul, ov_vul = _vulnerability_flags(vulnerability)
+    our_side = _seat_side(seat)
+    we_are_ns = (our_side == "NS")
+    our_vul = ns_vul if we_are_ns else ov_vul
+    opp_vul = ov_vul if we_are_ns else ns_vul
+
+    own_hcp = float(ctx.get("hcp", 0))
+    partner_seat = _partner_of(seat)
+    partner_hcp_mid = _partner_hcp_mid_from_calls(prior_calls, partner_seat)
+    combined_ns_hcp = own_hcp + partner_hcp_mid
+
+    # Only apply if we're likely in game territory
+    if combined_ns_hcp < 24:
+        return False, "kombineret HCP under 24 — sandsynligvis ikke offersituation"
+
+    # Infer opponent HCP from balance
+    opp_inferred_hcp = max(0.0, 40.0 - combined_ns_hcp)
+
+    # Estimate how many tricks opponents will take
+    estimated_opp_tricks = _estimate_opp_tricks_from_bids(
+        opp_inferred_hcp, opp_suit_length, opp_level
+    )
+
+    needed_tricks = opp_level + 6
+    predicted_undertricks = needed_tricks - estimated_opp_tricks
+
+    # Our expected game score
+    our_game_score = _our_likely_game_score(combined_ns_hcp, our_vul)
+
+    # Penalty score for doubling them
+    penalty_score = _doubled_undertrick_score(int(round(predicted_undertricks)), opp_vul)
+
+    # Vulnerability threshold (the 3/2/1 rule): minimum undertricks for double to profit
+    vul_rel = _vulnerability_relation_for_side(vulnerability, our_side)
+    if vul_rel == "favorable":
+        min_down = 3
+    elif vul_rel == "equal":
+        min_down = 2
+    else:
+        min_down = 1
+
+    reason = (
+        f"makker HCP ≈{partner_hcp_mid:.0f}, kombineret NS≈{combined_ns_hcp:.0f}, "
+        f"modpart HCP≈{opp_inferred_hcp:.0f}, "
+        f"estimeret ned={predicted_undertricks:.1f} (grænse={min_down}), "
+        f"straf≈{penalty_score} vs. vor udgang≈{our_game_score}"
+    )
+
+    if predicted_undertricks >= min_down and penalty_score >= our_game_score:
+        return True, reason
+    return False, reason
+
+
+# ---------------------------------------------------------------------------
+# End of sacrifice helpers
+# ---------------------------------------------------------------------------
+
+
 def _double_context_for_seat(
     prior_calls: list[Mapping[str, Any]],
     seat: str,
@@ -1468,13 +1925,26 @@ def _suggest_second_hand_competitive(
             else ctx["spades"] if first_strain == "S"
             else 0
         )
-        if first_strain in ("C", "D", "H", "S") and int(ctx["hcp"]) >= 10 and opener_len >= 4:
+        vulnerability = row.get("vul") if isinstance(row, Mapping) else None
+        sac_double, sac_reason = _sacrifice_double_is_better(
+            ctx, list(prior_calls or []), second_seat,
+            first_level, first_strain, vulnerability, opener_len,
+        )
+        shape_ok = first_strain in ("C", "D", "H", "S") and int(ctx["hcp"]) >= 10 and opener_len >= 4
+        if sac_double or shape_ok:
             double_ok = True
             double_rule_id = "penalty_double_basic"
             double_explanation = "Hånden vælger strafdobling i fravær af takeout/negative/udspilsdirigerende trigger."
-            double_reason = f"{hand_tag} strafdobling: OK (styrke + længde i modpartens farve)."
+            if sac_double:
+                double_reason = f"{hand_tag} strafdobling (offervurdering): OK — {sac_reason}."
+            else:
+                double_reason = f"{hand_tag} strafdobling: OK (styrke + længde i modpartens farve)."
         else:
-            double_reason = f"{hand_tag} strafdobling: afvist (kræver styrke og længde i modpartens farve)."
+            double_reason = (
+                f"{hand_tag} strafdobling: afvist — {sac_reason}."
+                if sac_reason
+                else f"{hand_tag} strafdobling: afvist (kræver styrke og længde i modpartens farve)."
+            )
 
     else:
         takeout_min_hcp = _takeout_double_min_hcp_for_seat(second_seat)
@@ -2825,7 +3295,17 @@ def _suggest_third_hand_after_partner_open(
 
         elif dbl_type == "penalty":
             opp_len = int(suit_lens.get(opp_strain, 0))
-            if opp_strain in ("S", "H", "D", "C") and int(ctx["hcp"]) >= 10 and opp_len >= 5:
+            vulnerability = row.get("vul") if isinstance(row, Mapping) else None
+            sac_double, sac_reason = _sacrifice_double_is_better(
+                ctx, list(prior_calls or []), third_seat,
+                opp_level, opp_strain, vulnerability, opp_len,
+            )
+            shape_ok = opp_strain in ("S", "H", "D", "C") and int(ctx["hcp"]) >= 10 and opp_len >= 5
+            if sac_double or shape_ok:
+                if sac_double:
+                    expl_note = f"Offervurdering: {sac_reason}."
+                else:
+                    expl_note = "Styrke + længde i modpartens farve."
                 return {
                     "dealer": third_seat,
                     "profile": None,
@@ -2834,7 +3314,7 @@ def _suggest_third_hand_after_partner_open(
                     "rule_id": "penalty_double_basic",
                     "explanation": "Dobling bruges som strafdobling i denne kontekst.",
                     "log_lines": log_lines + [
-                        f"{hand_tag} strafdobling: OK (længde i modpartens farve + styrke).",
+                        f"{hand_tag} strafdobling: OK — {expl_note}",
                         f"{hand_tag} valg: X",
                         f"{hand_tag} regel-id: penalty_double_basic",
                     ],

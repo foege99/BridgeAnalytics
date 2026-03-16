@@ -1681,3 +1681,76 @@ system_library:
             artificial: true
           notes:
             - "When Jordan 2NT is enabled, 2NT is no longer natural in this position"
+
+      sacrifice_evaluation:
+        description: >
+          Bidding-time model for deciding between doubling a competitive sacrifice
+          and bidding on. No double-dummy data is used — all inference comes from
+          the auction alone (own hand + ranges inferred from partner's and opponents'
+          bids). Three techniques are combined:
+          (1) Vulnerability thresholds (the classic 3/2/1 rule).
+          (2) HCP-balance: NS HCP from bids → EW HCP = 40 − NS → expected EW tricks.
+          (3) LoTT: inferred NS + EW trump totals ≈ total available tricks.
+
+        sacrifice_detection:
+          description: >
+            A sacrifice situation exists when our side likely has a making contract
+            but opponents have outbid us at a high level.
+          own_game_likely_when:
+            estimated_combined_ns_hcp_min: 25
+          suspect_sacrifice_when:
+            opp_level_min: 4
+            own_game_likely: true
+
+        opponent_trick_estimation:
+          description: >
+            Estimate how many tricks opponents will take, using only bid-inferred data.
+            Formula: floor(opp_inferred_hcp / 3) + suit_length_bonus.
+            opp_inferred_hcp = 40 − own_hcp − partner_hcp_mid_from_bid.
+          partner_hcp_inference_by_bid:
+            "1NT":  {low: 15, high: 17, mid: 16}
+            "2NT":  {low: 20, high: 21, mid: 20}
+            "1X":   {low: 12, high: 18, mid: 15}
+            "2C_strong": {low: 17, high: 24, mid: 20}
+            "2X_weak":   {low: 6,  high: 10, mid: 8}
+            "3X_preempt": {low: 5, high: 10, mid: 7}
+            "PASS": {low: 0,  high: 11, mid: 6}
+          suit_length_bonus:
+            opp_suit_length_7: 1
+            opp_suit_length_8plus: 2
+
+        doubled_sacrifice_profitable_vs_game:
+          description: >
+            A sacrifice at game-level or above is only profitable (for the sacrificers)
+            when they go down no more than this many tricks doubled.
+            For US as doublers: double only when we expect them to go down MORE than
+            these limits (i.e., the doubled penalty exceeds our own contract score).
+          max_undertricks_for_sacrifice_to_break_even:
+            favorable_vulnerability: 3   # they are vul, we are not
+            equal_vulnerability: 2
+            unfavorable_vulnerability: 1
+
+        doubled_sacrifice_profitable_vs_slam:
+          max_undertricks_for_sacrifice_to_break_even:
+            favorable_vulnerability: 6
+            equal_both_vul: 5
+            equal_both_not_vul: 4
+            unfavorable_vulnerability: 3
+
+        five_level_principle:
+          description: >
+            The five-level belongs to the opponents (Manfield rule).
+            Competing 5-over-5 almost never gains; total tricks rarely exceed 20.
+          avoid_five_over_five: true
+          exception: extreme_void_combined_with_distributional_inference
+
+        decision_logic:
+          - step: detect_sacrifice_situation
+            method: own_game_likely AND opp_level_min_4
+          - step: estimate_opp_tricks_from_bids
+            method: hcp_balance_and_suit_length
+          - step: compute_expected_doubled_penalty
+            method: standard_duplicate_doubled_undertrick_table
+          - step: compare_to_own_best_contract_value
+            method: hcp_based_game_score_estimate
+          - step: double_when_penalty_clearly_exceeds_own_contract
