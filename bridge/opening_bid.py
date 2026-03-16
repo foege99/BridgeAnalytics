@@ -1948,20 +1948,25 @@ def _suggest_second_hand_competitive(
 
     else:
         takeout_min_hcp = _takeout_double_min_hcp_for_seat(second_seat)
+        hcp_val = int(ctx["hcp"])
         opener_len = int(
             ctx["clubs"] if first_strain == "C"
             else ctx["diamonds"] if first_strain == "D"
             else ctx["hearts"] if first_strain == "H"
             else ctx["spades"]
         )
-        if first_strain in ("C", "D", "H", "S") and int(ctx["hcp"]) >= int(takeout_min_hcp):
-            if first_strain in ("C", "D"):
-                majors_ok = int(ctx["hearts"]) >= 3 and int(ctx["spades"]) >= 3
+        if first_strain in ("C", "D", "H", "S") and hcp_val >= int(takeout_min_hcp):
+            if hcp_val >= 17:
+                double_ok = True
+                double_reason = f"{hand_tag} oplysningsdobling: OK (stærk hånd 17+ uden fordelingskrav)."
+            elif first_strain in ("C", "D"):
+                major_lens = sorted((int(ctx["hearts"]), int(ctx["spades"])), reverse=True)
+                majors_ok = major_lens[0] >= 4 and major_lens[1] >= 3
                 if opener_len <= 2 and majors_ok:
                     double_ok = True
-                    double_reason = f"{hand_tag} oplysningsdobling: OK (kort i minor + begge majorer)."
+                    double_reason = f"{hand_tag} oplysningsdobling: OK (kort i minor + 4-3 i majorerne)."
                 else:
-                    double_reason = f"{hand_tag} oplysningsdobling: afvist (kræver kort minor + majorstøtte)."
+                    double_reason = f"{hand_tag} oplysningsdobling: afvist (kræver kort minor + 4-3/3-4 i majorerne)."
             else:
                 other_major_len = int(ctx["hearts"] if first_strain == "S" else ctx["spades"])
                 if opener_len <= 2 and other_major_len >= 4:
@@ -2047,6 +2052,25 @@ def _suggest_second_hand_competitive(
     prefer_overcall = overcall_bid is not None and (
         max(suit_lens.values()) >= 6 and int(ctx["hcp"]) >= 10
     )
+    parsed_overcall = _parse_contract_bid(overcall_bid) if overcall_bid is not None else None
+    if (
+        overcall_bid is not None
+        and double_type == "takeout"
+        and double_ok
+        and int(ctx["hcp"]) <= 16
+        and first_strain in ("H", "S")
+    ):
+        opposite_major = "S" if first_strain == "H" else "H"
+        if (
+            parsed_overcall is not None
+            and parsed_overcall[1] == opposite_major
+            and int(suit_lens[opposite_major]) >= 5
+        ):
+            prefer_overcall = True
+            log_lines.append(
+                f"{hand_tag} stilvalg: 5+ i modsatte major over majoråbning prioriterer indmelding fremfor oplysningsdobling."
+            )
+
     force_double = double_type == "lead_directing"
 
     if force_double and double_ok:

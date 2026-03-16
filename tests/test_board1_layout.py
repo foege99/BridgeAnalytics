@@ -820,6 +820,104 @@ def test_bid_scaffold_second_hand_takeout_double_option():
     assert ws.cell(row=21, column=4).value == 'X'
 
 
+def test_second_hand_takeout_double_over_minor_accepts_three_four_majors_in_12_16_range():
+    """Over 1m, 12-16 takeout double allows 4-3/3-4 in majors when short in opener minor."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'KJ4.Q4.AK974.83',
+        'Ø_hand': 'AQJ4.KT9.2.A842',
+        'S_hand': 'T53.Q9872.92.J84',
+        'V_hand': '9876.A653.JT6.K7',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    o_first = _find_call(seq, 'Ø', 1)
+
+    assert o_first is not None
+    assert str(o_first.get('display_bid')) == 'X'
+    assert 'takeout_double' in str(o_first.get('rule_id') or '')
+
+
+def test_second_hand_takeout_double_over_minor_rejects_three_three_majors_in_12_16_range():
+    """Over 1m, 12-16 with only 3-3 majors should not choose takeout double."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'KJ4.Q4.AK974.83',
+        'Ø_hand': 'AQJ.T98.62.KQJ92',
+        'S_hand': 'T53.Q9872.92.J84',
+        'V_hand': '9876.A653.JT6.K7',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    o_first = _find_call(seq, 'Ø', 1)
+
+    assert o_first is not None
+    assert str(o_first.get('display_bid')) != 'X'
+    assert 'takeout_double' not in str(o_first.get('rule_id') or '')
+
+
+def test_second_hand_takeout_double_over_minor_allows_17_plus_without_shape_requirement():
+    """Strong 17+ hand may use takeout double over 1m even without the 4-3 major pattern."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'KJ4.Q4.AK974.83',
+        'Ø_hand': 'AKQ.JT9.62.AKQJ2',
+        'S_hand': 'T53.Q9872.92.J84',
+        'V_hand': '9876.A653.JT6.K7',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    o_first = _find_call(seq, 'Ø', 1)
+
+    assert o_first is not None
+    assert str(o_first.get('display_bid')) == 'X'
+    assert 'takeout_double' in str(o_first.get('rule_id') or '')
+
+
+def test_second_hand_takeout_double_over_major_with_four_in_opposite_major():
+    """Over 1M, shortness in opener major and 4-card opposite major can use takeout double."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'A7.KQJ97.K74.82',
+        'Ø_hand': 'KQJ8.7.AQ4.T632',
+        'S_hand': 'T53.Q9872.92.J84',
+        'V_hand': '9642.AT6.T865.K7',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    n_first = _find_call(seq, 'N', 1)
+    o_first = _find_call(seq, 'Ø', 1)
+
+    assert n_first is not None
+    assert str(n_first.get('display_bid')) == '1♥'
+    assert o_first is not None
+    assert str(o_first.get('display_bid')) == 'X'
+    assert 'takeout_double' in str(o_first.get('rule_id') or '')
+
+
+def test_second_hand_overcalls_opposite_major_with_five_card_suit_instead_of_takeout_double():
+    """Over 1M, 5-card opposite major should be shown by natural overcall instead of takeout double."""
+    row = {
+        'dealer': 'N',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'A7.KQJ97.K74.82',
+        'Ø_hand': 'KQJ98.7.AQ4.T63',
+        'S_hand': 'T53.Q9872.92.J84',
+        'V_hand': '9642.AT6.T865.K7',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    o_first = _find_call(seq, 'Ø', 1)
+
+    assert o_first is not None
+    assert str(o_first.get('display_bid')) == '1♠'
+    assert str(o_first.get('rule_id')) == 'natural_overcall_basic'
+
+
 def test_second_hand_uses_natural_one_nt_overcall_with_diamond_stopper():
     """After 1D, balanced 15-18 with diamond stopper should overcall 1NT."""
     row = {
