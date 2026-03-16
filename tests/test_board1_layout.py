@@ -918,6 +918,43 @@ def test_second_hand_overcalls_opposite_major_with_five_card_suit_instead_of_tak
     assert str(o_first.get('rule_id')) == 'natural_overcall_basic'
 
 
+def test_competitive_opener_stops_after_three_diamonds_without_partner_support():
+    """After opener has competed to 3♦ without support, engine should not keep climbing in diamonds."""
+    row = {
+        'dealer': 'Ø',
+        'vul': 'NS',
+        'N_hand': 'A632.JT94.J.A964',
+        'Ø_hand': 'QT.A853.AQ8543.J',
+        'S_hand': 'K97.KQ76.K.KQ875',
+        'V_hand': 'J854.2.T9762.T32',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    assert any(str(c.get('dealer')) == 'Ø' and str(c.get('display_bid')) == '3♦' for c in seq)
+    assert not any(
+        str(c.get('dealer')) == 'Ø' and str(c.get('display_bid')) in ('4♦', '5♦', '6♦', '7♦')
+        for c in seq
+    )
+
+
+def test_competitive_opener_does_not_rebid_four_diamonds_with_only_five_card_suit():
+    """Opener should not bid 4♦ with only a 5-card diamond suit and no clear support."""
+    row = {
+        'dealer': 'V',
+        'vul': 'Alle',
+        'N_hand': 'K653.QT96.4.A984',
+        'Ø_hand': 'J8.AJ.KJ853.Q753',
+        'S_hand': 'A7.K43.AQ62.KJT2',
+        'V_hand': 'QT942.8752.T97.6',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+
+    assert any(str(c.get('dealer')) == 'Ø' and str(c.get('display_bid')) == '1♦' for c in seq)
+    assert not any(str(c.get('dealer')) == 'Ø' and str(c.get('display_bid')) == '4♦' for c in seq)
+
+
 def test_second_hand_uses_natural_one_nt_overcall_with_diamond_stopper():
     """After 1D, balanced 15-18 with diamond stopper should overcall 1NT."""
     row = {

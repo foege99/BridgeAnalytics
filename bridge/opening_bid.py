@@ -2027,6 +2027,57 @@ def _suggest_second_hand_competitive(
         reverse=True,
     )
 
+    actor_contracts: list[tuple[int, str]] = []
+    partner_contracts: list[tuple[int, str]] = []
+    partner_seat = _partner_of(second_seat)
+    for prev in list(prior_calls or []):
+        prev_seat = _normalize_seat(prev.get("dealer"))
+        prev_parsed = _parse_contract_bid(str(prev.get("bid") or "PASS").upper())
+        if prev_parsed is None:
+            continue
+        if prev_seat == second_seat:
+            actor_contracts.append((int(prev_parsed[0]), str(prev_parsed[1])))
+        elif prev_seat == partner_seat:
+            partner_contracts.append((int(prev_parsed[0]), str(prev_parsed[1])))
+
+    def _allow_competitive_self_rebid(cand_bid: str, cand_strain: str) -> tuple[bool, str | None]:
+        """Guard against over-aggressive repeated self-rebids without partner support."""
+        parsed_cand = _parse_contract_bid(cand_bid)
+        if parsed_cand is None or not actor_contracts:
+            return True, None
+
+        actor_last_level, actor_last_strain = actor_contracts[-1]
+        cand_level, cand_parsed_strain = int(parsed_cand[0]), str(parsed_cand[1])
+
+        # Only constrain pure self-rebids in the same strain above own previous level.
+        if cand_parsed_strain != actor_last_strain or cand_level <= int(actor_last_level):
+            return True, None
+
+        partner_has_support = any(str(st) == actor_last_strain for _lvl, st in partner_contracts)
+        if partner_has_support:
+            return True, None
+
+        same_strain_count = sum(1 for _lvl, st in actor_contracts if str(st) == actor_last_strain)
+        hcp_val = int(ctx["hcp"])
+        suit_len = int(suit_lens.get(actor_last_strain, 0))
+
+        # After already rebidding own suit once, continuing again without support
+        # should require very strong shape/values.
+        if same_strain_count >= 2 and not (hcp_val >= 17 and suit_len >= 7):
+            return False, (
+                f"{hand_tag} indmelding: afvist ({_to_display_bid(cand_bid)} uden makkerstøtte efter allerede "
+                f"genmeldt egen farve; kræver ca 17+ HCP og 7+ kort)."
+            )
+
+        # First unsupported self-rebid to game level is also reserved for strong long-suit hands.
+        if cand_level >= 4 and not (hcp_val >= 17 and suit_len >= 7):
+            return False, (
+                f"{hand_tag} indmelding: afvist ({_to_display_bid(cand_bid)} uden makkerstøtte; 4-trins genmelding "
+                f"i egen farve kræver ca 17+ HCP og 7+ kort)."
+            )
+
+        return True, None
+
     overcall_bid = None
     overcall_rule = None
     overcall_line = f"{hand_tag} indmelding: afvist."
@@ -2037,6 +2088,13 @@ def _suggest_second_hand_competitive(
             cand = _lowest_higher_bid_for_strain(first_bid, s)
             if cand is None:
                 continue
+
+            allow_cand, reject_reason = _allow_competitive_self_rebid(cand, s)
+            if not allow_cand:
+                if reject_reason:
+                    log_lines.append(reject_reason)
+                continue
+
             overcall_bid = cand
             overcall_rule = "natural_overcall_basic"
             overcall_line = (
