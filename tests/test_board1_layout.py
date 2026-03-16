@@ -1870,6 +1870,49 @@ def test_mini_traveller_contract_cell_colored_by_match_against_possible_bidding(
     assert red_rgb.endswith('F8D7DA')
 
 
+def test_mini_traveller_rows_sorted_by_points_ns_desc_and_points_ov_asc():
+    """Traveller rows should place highest NS points first and highest ØV points last."""
+    df_mid = _make_df(
+        ns1=PER,
+        ns2='Mid S',
+        ew1='Mid E',
+        ew2='Mid V',
+        point_NS=10,
+        point_ØV=10,
+        contract='2♥',
+    )
+    df_bottom = _make_df(
+        ns1='Bottom N',
+        ns2='Bottom S',
+        ew1='Bottom E',
+        ew2='Bottom V',
+        point_NS=2,
+        point_ØV=18,
+        contract='1NT',
+    )
+    df_top = _make_df(
+        ns1='Top N',
+        ns2='Top S',
+        ew1='Top E',
+        ew2='Top V',
+        point_NS=18,
+        point_ØV=2,
+        contract='4♠',
+    )
+    # Input order intentionally scrambled to prove table sorting.
+    df = pd.concat([df_mid, df_bottom, df_top], ignore_index=True)
+
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # Point NS / Point ØV are M/N columns in traveller row.
+    assert ws.cell(row=2, column=13).value == 18
+    assert ws.cell(row=2, column=14).value == 2
+    assert ws.cell(row=4, column=13).value == 2
+    assert ws.cell(row=4, column=14).value == 18
+
+
 # ---------------------------------------------------------------------------
 # Tests for Double Dummy table (E5:K9)
 # ---------------------------------------------------------------------------

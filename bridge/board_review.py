@@ -756,6 +756,30 @@ def write_board1_layout_sheet(
         score_ov_out = _as_excel_number(score_ov_num) if score_ov_num is not None else score_ov_raw
         return score_ns_out, score_ov_out
 
+    def _point_values_for_sort(r) -> tuple[float | None, float | None]:
+        """Return numeric (point_ns, point_ov) for traveller sorting."""
+        point_ns_raw = _get_field(r, 'point_NS', 'mp_NS', 'imp_NS', 'mp_ns', 'imp_ns')
+        point_ov_raw = _get_field(r, 'point_ØV', 'mp_ØV', 'imp_ØV', 'mp_ew', 'imp_ew')
+        return _to_number_or_none(point_ns_raw), _to_number_or_none(point_ov_raw)
+
+    if not df_trav.empty:
+        # Sort rows so highest NS points are first and highest ØV points are last.
+        df_trav = df_trav.copy()
+        point_pairs = df_trav.apply(_point_values_for_sort, axis=1, result_type='expand')
+        if not point_pairs.empty and point_pairs.shape[1] >= 2:
+            df_trav['_point_ns_sort'] = pd.to_numeric(point_pairs[0], errors='coerce').fillna(float('-inf'))
+            df_trav['_point_ov_sort'] = pd.to_numeric(point_pairs[1], errors='coerce').fillna(float('inf'))
+            df_trav['_trav_input_order'] = np.arange(len(df_trav), dtype=int)
+            df_trav = (
+                df_trav
+                .sort_values(
+                    by=['_point_ns_sort', '_point_ov_sort', '_trav_input_order'],
+                    ascending=[False, True, True],
+                    kind='mergesort',
+                )
+                .drop(columns=['_point_ns_sort', '_point_ov_sort', '_trav_input_order'])
+            )
+
     # Build score -> (freq pct NS, freq point ØV) lookup using the same recompute logic
     # as frekvenstavlen, then reuse those values in the traveller table.
     def _trav_hand_signature(row_obj) -> str | None:
