@@ -1124,6 +1124,44 @@ def test_takeout_double_partner_response_jump_new_suit_after_pass():
     assert str(n_first.get('rule_id')) == 'takeout_double_response_jump_new_suit'
 
 
+def test_takeout_doubler_raises_to_game_after_constructive_major_response_with_fit_strength():
+    """After 1D-X-pass-2H-3D, doubler with fit and strength should raise directly to 4H."""
+    row = {
+        'dealer': 'Ø',
+        'vul': 'NS',
+        'N_hand': 'A632.JT94.J.A964',
+        'Ø_hand': 'QT.A853.AQ8543.J',
+        'S_hand': 'K97.KQ76.K.KQ875',
+        'V_hand': 'J854.2.T9762.T32',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    s_second = _find_call(seq, 'S', 2)
+
+    assert s_second is not None
+    assert str(s_second.get('display_bid')) == '4♥'
+    assert str(s_second.get('rule_id')) == 'third_hand_takeout_game_raise_with_fit'
+
+
+def test_takeout_doubler_does_not_force_game_without_enough_fit_strength():
+    """Same structure should stay below game when doubler lacks enough fit strength."""
+    row = {
+        'dealer': 'Ø',
+        'vul': 'Ingen i zonen',
+        'N_hand': 'T53.K9872.92.AJ84',
+        'Ø_hand': 'A84.Q73.AQJ74.85',
+        'S_hand': 'KQ97.AJ6.K.9743',
+        'V_hand': 'J62.T542.T863.K2',
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    s_second = _find_call(seq, 'S', 2)
+
+    assert s_second is not None
+    assert str(s_second.get('display_bid')) == '3♥'
+    assert str(s_second.get('rule_id')) == 'third_hand_simple_raise'
+
+
 def test_takeout_double_partner_response_new_suit_with_weak_values():
     """After 1D-X-pass, weak advancer should bid cheapest suitable major at lowest level."""
     row = {

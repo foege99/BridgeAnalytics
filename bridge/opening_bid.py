@@ -3435,6 +3435,53 @@ def _suggest_third_hand_after_partner_open(
             ],
         }
 
+    # After our takeout double and partner's constructive major response,
+    # jump to game with clear fit strength.
+    actor_has_takeout_double = any(
+        _normalize_seat(c.get("dealer")) == third_seat
+        and str(c.get("bid") or "").upper() in ("X", "DBL", "DOUBLE")
+        and "takeout_double" in str(c.get("rule_id") or "")
+        for c in (prior_calls or [])
+    )
+    if (
+        actor_has_takeout_double
+        and str(partner_last_rule) == "takeout_double_response_jump_new_suit"
+        and partner_strain in ("H", "S")
+    ):
+        fit_len = int(ctx["hearts"] if partner_strain == "H" else ctx["spades"])
+        play_pts, relation, shortness_pts, trump_len_bonus, trump_len = _playing_points_after_fit(
+            ctx,
+            third_seat,
+            partner_strain,
+            row.get("vul") if isinstance(row, Mapping) else None,
+        )
+        if fit_len >= 3 and (int(ctx["hcp"]) >= 16 or int(play_pts) >= 18):
+            target = f"4{partner_strain}"
+            if _is_higher_contract(target, highest_contract):
+                relation_dk = {
+                    "favorable": "gunstig",
+                    "equal": "lige",
+                    "unfavorable": "ugunstig",
+                }.get(relation, "lige")
+                display = _to_display_bid(target)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": target,
+                    "display_bid": display,
+                    "rule_id": "third_hand_takeout_game_raise_with_fit",
+                    "explanation": "Efter oplysningsdobling hæves til udgang med fit og stærke værdier.",
+                    "log_lines": log_lines + [
+                        (
+                            f"{hand_tag} fit-point: HCP {int(ctx['hcp'])} + shortness {shortness_pts} "
+                            f"+ trumflængdebonus {trump_len_bonus} = {play_pts} ({relation_dk} zone, trumf={trump_len})."
+                        ),
+                        f"{hand_tag} regel: efter takeout + konstruktivt majorsvar hæves til 4M ved HCP>=16 eller fit-point>=18.",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: third_hand_takeout_game_raise_with_fit",
+                    ],
+                }
+
     # After partner's level-2 minor support, probe 4-card majors before further minor raises.
     if partner_strain in ("C", "D") and partner_lvl >= 2 and int(ctx["hcp"]) >= 10:
         for major in ("H", "S"):
