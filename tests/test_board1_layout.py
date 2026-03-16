@@ -1870,15 +1870,17 @@ def test_mini_traveller_contract_cell_colored_by_match_against_possible_bidding(
     assert red_rgb.endswith('F8D7DA')
 
 
-def test_mini_traveller_rows_sorted_by_points_ns_desc_and_points_ov_asc():
-    """Traveller rows should place highest NS points first and highest ØV points last."""
+def test_mini_traveller_rows_sorted_by_score_ns_desc_and_score_ov_asc():
+    """Traveller rows should place highest NS score first and highest ØV score last."""
     df_mid = _make_df(
         ns1=PER,
         ns2='Mid S',
         ew1='Mid E',
         ew2='Mid V',
-        point_NS=10,
-        point_ØV=10,
+        score_NS=110,
+        score_ØV=-110,
+        point_NS=18,
+        point_ØV=1,
         contract='2♥',
     )
     df_bottom = _make_df(
@@ -1886,8 +1888,10 @@ def test_mini_traveller_rows_sorted_by_points_ns_desc_and_points_ov_asc():
         ns2='Bottom S',
         ew1='Bottom E',
         ew2='Bottom V',
-        point_NS=2,
-        point_ØV=18,
+        score_NS=-100,
+        score_ØV=100,
+        point_NS=17,
+        point_ØV=2,
         contract='1NT',
     )
     df_top = _make_df(
@@ -1895,8 +1899,10 @@ def test_mini_traveller_rows_sorted_by_points_ns_desc_and_points_ov_asc():
         ns2='Top S',
         ew1='Top E',
         ew2='Top V',
-        point_NS=18,
-        point_ØV=2,
+        score_NS=620,
+        score_ØV=-620,
+        point_NS=1,
+        point_ØV=9,
         contract='4♠',
     )
     # Input order intentionally scrambled to prove table sorting.
@@ -1906,11 +1912,11 @@ def test_mini_traveller_rows_sorted_by_points_ns_desc_and_points_ov_asc():
     write_board1_layout_sheet(writer, df, PER)
     ws = wb['Board1_LastTournament']
 
-    # Point NS / Point ØV are M/N columns in traveller row.
-    assert ws.cell(row=2, column=13).value == 18
-    assert ws.cell(row=2, column=14).value == 2
-    assert ws.cell(row=4, column=13).value == 2
-    assert ws.cell(row=4, column=14).value == 18
+    # Score NS / Score ØV are K/L columns in traveller row.
+    assert ws.cell(row=2, column=11).value == 620
+    assert ws.cell(row=2, column=12).value == -620
+    assert ws.cell(row=4, column=11).value == -100
+    assert ws.cell(row=4, column=12).value == 100
 
 
 # ---------------------------------------------------------------------------
