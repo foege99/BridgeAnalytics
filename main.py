@@ -1050,18 +1050,26 @@ def main():
         if not df_other_rows_latest.empty:
             df_other_rows_latest.to_excel(writer, sheet_name='Rows_BC_Results', index=False)
 
-        # Lead effect pooled across all boards (best -> worst)
+        # Lead effect split into one sheet per contract color (♣ ♦ ♥ ♠ NT)
+        # Within each color, rows are ranked best→worst by avg_pct_defense (most tricks for defense on top).
+        _LEAD_COLOR_SHEETS = [
+            ('♣', 'Lead_Klør'),
+            ('♦', 'Lead_Ruder'),
+            ('♥', 'Lead_Hjerter'),
+            ('♠', 'Lead_Spar'),
+            ('NT', 'Lead_NT'),
+        ]
+
         if not df_lead_effect_allboards.empty:
-            df_lead_export = df_lead_effect_allboards.copy()
+            df_lead_export_base = df_lead_effect_allboards.copy()
             lead_prefix = ['decl_hand', 'lead_type', 'lead_hand', 'lead_values', 'contract_color']
-            lead_prefix = [c for c in lead_prefix if c in df_lead_export.columns]
+            lead_prefix = [c for c in lead_prefix if c in df_lead_export_base.columns]
             lead_rest = [
-                c for c in df_lead_export.columns
+                c for c in df_lead_export_base.columns
                 if c not in lead_prefix and c not in {'contract_pool', 'contract_pool_n', 'avg_play_precision_dd'}
             ]
-            df_lead_export = df_lead_export[lead_prefix + lead_rest]
-
-            df_lead_export = df_lead_export.rename(columns={
+            df_lead_export_base = df_lead_export_base[lead_prefix + lead_rest]
+            df_lead_export_base = df_lead_export_base.rename(columns={
                 'decl_hand': 'Spilfører',
                 'lead_type': 'Lead type',
                 'lead_hand': 'Udspiller',
@@ -1069,25 +1077,49 @@ def main():
                 'contract_color': 'Farve',
             })
 
-            df_lead_export.to_excel(writer, sheet_name='Lead_Effect_AllBoards', index=False)
+            any_color_written = False
+            for color_val, sheet_name in _LEAD_COLOR_SHEETS:
+                if 'Farve' in df_lead_export_base.columns:
+                    subset = df_lead_export_base[df_lead_export_base['Farve'] == color_val].copy()
+                else:
+                    subset = pd.DataFrame()
 
-            ws_lead = writer.sheets.get('Lead_Effect_AllBoards')
-            if ws_lead is not None:
-                farve_col = None
-                udspil_col = None
-                for col_idx in range(1, ws_lead.max_column + 1):
-                    if ws_lead.cell(row=1, column=col_idx).value == 'Farve':
-                        farve_col = col_idx
-                    if ws_lead.cell(row=1, column=col_idx).value == 'Udspil':
-                        udspil_col = col_idx
+                if subset.empty:
+                    continue
 
-                for row_idx in range(2, ws_lead.max_row + 1):
-                    if farve_col is not None:
-                        val = ws_lead.cell(row=row_idx, column=farve_col).value
-                        if val in ('♥', '♦'):
-                            _apply_red_suit_symbols(ws_lead.cell(row=row_idx, column=farve_col))
-                    if udspil_col is not None:
-                        _apply_red_suit_symbols(ws_lead.cell(row=row_idx, column=udspil_col))
+                # Re-rank within this color: highest avg_pct_defense (best for defense) on top
+                if 'avg_pct_defense' in subset.columns:
+                    subset = subset.sort_values(
+                        by='avg_pct_defense', ascending=False, na_position='last'
+                    ).reset_index(drop=True)
+                if 'rank_best_to_worst' in subset.columns:
+                    subset['rank_best_to_worst'] = range(1, len(subset) + 1)
+
+                subset.to_excel(writer, sheet_name=sheet_name, index=False)
+                any_color_written = True
+
+                ws_lead = writer.sheets.get(sheet_name)
+                if ws_lead is not None:
+                    farve_col = None
+                    udspil_col = None
+                    for col_idx in range(1, ws_lead.max_column + 1):
+                        hdr = ws_lead.cell(row=1, column=col_idx).value
+                        if hdr == 'Farve':
+                            farve_col = col_idx
+                        if hdr == 'Udspil':
+                            udspil_col = col_idx
+                    for row_idx in range(2, ws_lead.max_row + 1):
+                        if farve_col is not None:
+                            val = ws_lead.cell(row=row_idx, column=farve_col).value
+                            if val in ('♥', '♦'):
+                                _apply_red_suit_symbols(ws_lead.cell(row=row_idx, column=farve_col))
+                        if udspil_col is not None:
+                            _apply_red_suit_symbols(ws_lead.cell(row=row_idx, column=udspil_col))
+
+            if not any_color_written:
+                pd.DataFrame([
+                    {'message': 'Ingen gyldige lead-data fundet for seneste turnering (A+B+C, board 1-24).'}
+                ]).to_excel(writer, sheet_name='Lead_Effect_AllBoards', index=False)
         else:
             pd.DataFrame([
                 {'message': 'Ingen gyldige lead-data fundet for seneste turnering (A+B+C, board 1-24).'}
