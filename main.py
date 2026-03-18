@@ -952,15 +952,54 @@ def main():
             axis=1
         )
     ].copy()
+
+    # Rapport - Aften skal vise udvikling over tid fra hele database/cache
+    # for turneringer hvor BÅDE Henrik og Per deltager.
+    df_pair_history_evening = pd.DataFrame()
+    cached_rows_for_evening = _load_all_cached_rows(cache)
+    if cached_rows_for_evening:
+        df_pair_history_evening = pd.DataFrame(cached_rows_for_evening)
+        if "tournament_date" not in df_pair_history_evening.columns and "date" in df_pair_history_evening.columns:
+            df_pair_history_evening["tournament_date"] = df_pair_history_evening["date"]
+
+        df_pair_history_evening = df_pair_history_evening[
+            df_pair_history_evening.apply(
+                lambda r: (HENRIK in [r["ns1"], r["ns2"], r["ew1"], r["ew2"]]) and
+                          (PER in [r["ns1"], r["ns2"], r["ew1"], r["ew2"]]),
+                axis=1
+            )
+        ].copy()
+
+        if not df_pair_history_evening.empty:
+            evening_dates = (
+                df_pair_history_evening["tournament_date"].nunique()
+                if "tournament_date" in df_pair_history_evening.columns
+                else 0
+            )
+            print(
+                f"  ℹ Rapport - Aften bruger fuld cache-historik: "
+                f"{len(df_pair_history_evening)} rækker på {evening_dates} spilledatoer"
+            )
+    elif args.last_tuesday_only:
+        print("  ⚠ Rapport - Aften: ingen cache-historik fundet; bruger valgt periode.")
     
     if len(df_classic_source) > 0:
         df_classic_all_roles = add_roles_and_pct(df_classic_source, henrik=HENRIK, per=PER)
-        df_evening_matrix = make_evening_role_matrix(df_classic_all_roles)
         df_quarterly = make_quarterly_summary_with_ci(df_classic_all_roles)
     else:
         df_classic_all_roles = pd.DataFrame()
-        df_evening_matrix = pd.DataFrame()
         df_quarterly = pd.DataFrame()
+
+    if len(df_pair_history_evening) > 0:
+        df_evening_matrix = make_evening_role_matrix(
+            add_roles_and_pct(df_pair_history_evening, henrik=HENRIK, per=PER)
+        )
+    elif len(df_pair_all) > 0:
+        df_evening_matrix = make_evening_role_matrix(
+            add_roles_and_pct(df_pair_all.copy(), henrik=HENRIK, per=PER)
+        )
+    else:
+        df_evening_matrix = pd.DataFrame()
 
     if len(df_pair_all) > 0:
         df_pair_all = add_roles_and_pct(df_pair_all, henrik=HENRIK, per=PER)
