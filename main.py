@@ -983,11 +983,17 @@ def main():
     elif args.last_tuesday_only:
         print("  ⚠ Rapport - Aften: ingen cache-historik fundet; bruger valgt periode.")
     
-    if len(df_classic_source) > 0:
-        df_classic_all_roles = add_roles_and_pct(df_classic_source, henrik=HENRIK, per=PER)
-        df_quarterly = make_quarterly_summary_with_ci(df_classic_all_roles)
+    # Rapport - Kvartal: always use full cache history filtered to Henrik+Per boards,
+    # exactly like Rapport - Aften.  df_pair_history_evening already carries that data.
+    if len(df_pair_history_evening) > 0:
+        df_quarterly = make_quarterly_summary_with_ci(
+            add_roles_and_pct(df_pair_history_evening, henrik=HENRIK, per=PER)
+        )
+    elif len(df_classic_source) > 0:
+        df_quarterly = make_quarterly_summary_with_ci(
+            add_roles_and_pct(df_classic_source, henrik=HENRIK, per=PER)
+        )
     else:
-        df_classic_all_roles = pd.DataFrame()
         df_quarterly = pd.DataFrame()
 
     if len(df_pair_history_evening) > 0:
