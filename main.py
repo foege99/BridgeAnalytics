@@ -686,9 +686,12 @@ def main():
                     debug_hands=False,
                 )
                 
-                # Tilføj section kolonne
+                # Tilføj section kolonne og ret evt. forkert row-detektion.
+                # bridge.dk's section-navn fra crawl er autoritativt; scraper-
+                # detektionen kan fejle (fx "A-rækken" vises for alle sektioner).
                 for row in rows:
                     row['section'] = section_name
+                    row['row'] = section_name   # override scraped row with crawl label
                     row['clubno'] = clubno
                     row['mainclubno'] = mainclubno
                     row['tournament_id'] = tournament_id
@@ -773,15 +776,18 @@ def main():
     )
     print_cross_club_board_identity_summary(cross_club_summary)
 
-    ok_boards = set(
+    # Boards where clubs GENUINELY play different hands (we must exclude these).
+    # MISSING_CLUB_ROW and ROW_MISMATCH_WITHIN_CLUB are data-quality issues, not
+    # proven cross-club mismatches, so we do NOT remove those boards.
+    club_mismatch_boards = set(
         pd.to_numeric(
             df_cross_club_board_check.loc[
-                df_cross_club_board_check['status'] == 'OK',
+                df_cross_club_board_check['status'] == 'CLUB_MISMATCH',
                 'board_no',
             ],
             errors='coerce',
         ).dropna().astype(int).tolist()
-    )
+    ) if not df_cross_club_board_check.empty else set()
 
     target_date_txt = cross_club_summary.get('target_date')
     target_date_obj = None
@@ -795,16 +801,26 @@ def main():
         df_all['_tdate_filter'] = pd.to_datetime(df_all['tournament_date'], errors='coerce').dt.date
         board_int = pd.to_numeric(df_all['board_no'], errors='coerce')
         before_rows = len(df_all)
-        keep_mask = (
-            (df_all['_tdate_filter'] != target_date_obj)
-            | board_int.isin(ok_boards)
-        )
+
+        if club_mismatch_boards:
+            # Some boards have genuinely different hands across clubs: remove those.
+            keep_mask = (
+                (df_all['_tdate_filter'] != target_date_obj)
+                | ~board_int.isin(club_mismatch_boards)
+            )
+            filter_details = f"{len(club_mismatch_boards)} CLUB_MISMATCH boards ekskluderet"
+        else:
+            # No proven cross-club mismatch: keep all data (even if boards are not
+            # fully verifiable across all clubs/rows).
+            keep_mask = pd.Series(True, index=df_all.index)
+            filter_details = "ingen bevist mismatch – alle data bevaret"
+
         df_all = df_all[keep_mask].copy()
         df_all = df_all.drop(columns=['_tdate_filter'], errors='ignore')
         removed_rows = before_rows - len(df_all)
         print(
             f"  ✓ Mismatch-filter aktiv på {target_date_obj}: "
-            f"{len(ok_boards)} OK boards, {removed_rows} rækker ekskluderet"
+            f"{filter_details}, {removed_rows} rækker ekskluderet"
         )
 
     if df_all.empty:
@@ -828,10 +844,10 @@ def main():
     print(f"  ✓ Resultater i andre rækker (B+C): {len(df_other_rows_latest)}")
 
     df_board_abc_summary = pd.DataFrame([board_abc_summary])
-    
+
     print("\nTilføjer hånd-features...")
     df_all = add_hand_features(df_all)
-    
+
     # ✅ TILFØJ PHASE 2.1 REFERENCE-LAG
     print("Tilføjer Phase 2.1 reference-lag (fra alle sections A+B+C+D...)...")
     df_all = add_phase21_fields(df_all, n_min=12)
@@ -840,7 +856,7 @@ def main():
     print(f"    - Split boards (competitive): {df_all['competitive_flag'].sum()}")
 
     # ✅ TILFØJ MVP METRICS
-    print("Tilføjer MVP analyse-metrikker (melding, spilføring, udspil)...")
+    print("Tilføjer MVP analyse-metrikker (melding, spilleføring, udspil)...")
     df_all = add_mvp_metrics(df_all)
     print("  ✓ MVP metrikker beregnet")
 
@@ -855,7 +871,7 @@ def main():
         include_decl_hand=True,
     )
     print(f"  ✓ Lead effect rows: {len(df_lead_effect_allboards)}")
-    
+
     # ✅ BOARD REVIEW ANALYSE (kun A-rækken)
     print("\nGenererer Board Review rapporter (kun A-rækken)...")
     df_a_only = df_all[df_all['section'] == 'A'].copy()

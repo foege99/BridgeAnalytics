@@ -93,6 +93,8 @@ def _combined_hcp(row: pd.Series) -> Optional[float]:
 def _expected_level_hcp(combined_hcp: Optional[float]) -> Optional[int]:
     if combined_hcp is None:
         return None
+    if isinstance(combined_hcp, float) and math.isnan(combined_hcp):
+        return None
     raw = math.floor((combined_hcp - 20) / 3) + 1
     return max(1, min(7, raw))
 

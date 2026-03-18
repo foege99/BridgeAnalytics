@@ -238,7 +238,14 @@ def make_cross_club_board_identity_check(
         return report, summary
 
     work["board_no_int"] = work["board_no_int"].astype(int)
-    work["_hand_signature"] = work[hand_cols].fillna("").astype(str).agg("|".join, axis=1)
+    def _make_hand_sig(row):
+        """Return hand signature, or None when all hand columns are absent/empty."""
+        vals = [row[c] for c in hand_cols]
+        if all(pd.isna(v) or str(v).strip() == "" for v in vals):
+            return None
+        return "|".join("" if pd.isna(v) else str(v) for v in vals)
+
+    work["_hand_signature"] = work.apply(_make_hand_sig, axis=1)
 
     grouped = work.groupby(["clubno_int", "row_code", "board_no_int"], dropna=False).agg(
         n_results=("board_no", "size"),
