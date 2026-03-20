@@ -3058,7 +3058,46 @@ def _suggest_third_hand_after_partner_open(
                     ],
                 }
 
-    # Responder first call after 1S: weak raise is limited; stronger hands use 2-over-1 new suit.
+    # Responder first call: 4-card major at 1-level takes priority over minor support
+    # or any other 2-level call.  With 6-9 HCP it may be the only chance to show the
+    # major; with 10+ HCP the hand can show the minor later.
+    # Priority: H before S (lower major first — i.e. show 1H before 1S so that
+    # opener can show 4S over 1H at 1-level).
+    if (
+        not opp_has_contract
+        and current_is_responder_first
+        and open_lvl == 1
+        and open_strain in ("C", "D")
+        and int(ctx["hcp"]) >= 6
+    ):
+        for major in ("H", "S"):
+            if suit_lens[major] < 4:
+                continue
+            if major in reserved:
+                continue
+            cand = _lowest_higher_bid_for_strain(highest_contract, major)
+            parsed_cand = _parse_contract_bid(cand)
+            if cand is None or parsed_cand is None:
+                continue
+            if parsed_cand[0] != 1:
+                # The major can no longer be shown at the 1-level — fall through.
+                continue
+            display = _to_display_bid(cand)
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": cand,
+                "display_bid": display,
+                "rule_id": "responder_one_level_major_over_minor",
+                "explanation": "Svarer viser 4-k major på 1-plans niveau (prioritet over minor-støtte og 2-level minor).",
+                "log_lines": log_lines + [
+                    f"{hand_tag} regel: 4+k {major.lower()} vist på 1-plans niveau; 2-plans minor vises kun med 10+ HCP.",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: responder_one_level_major_over_minor",
+                ],
+            }
+
+
     if (
         not opp_has_contract
         and current_is_responder_first
@@ -3204,6 +3243,50 @@ def _suggest_third_hand_after_partner_open(
                         f"{hand_tag} note: svarhånd begrænset til cirka {one_nt_low}-{one_nt_high} HCP.",
                         f"{hand_tag} valg: 3NT",
                         f"{hand_tag} regel-id: opener_rebid_after_1m_1nt_strong_game",
+                    ],
+                }
+
+    # Opener rebid after 1m-1M (major response at 1-level): with a balanced minimum
+    # hand (no singleton/void, no 5-card major) and 11-16 HCP, rebid 1NT instead of
+    # showing a 4-card side suit or raising with only 3-card support.
+    # Exception: with 4+ card support for partner's major, raise normally.
+    if (
+        not opp_has_contract
+        and current_is_opener_rebid
+        and open_lvl == 1
+        and open_strain in ("C", "D")
+        and resp_lvl == 1
+        and resp_strain in ("H", "S")
+    ):
+        hcp_val = int(ctx["hcp"])
+        shdc = ctx.get("shape_shdc", (0, 0, 0, 0))
+        opener_min_suit = min(shdc)
+        opener_max_suit = max(shdc)
+        opener_is_balanced = (opener_min_suit >= 2) and (opener_max_suit <= 5)
+        # Also ensure no 5-card major (opener with 5-card major should have opened 1M).
+        opener_no_5card_major = suit_lens["S"] <= 4 and suit_lens["H"] <= 4
+        opener_has_4card_support = suit_lens[resp_strain] >= 4
+        if (
+            opener_is_balanced
+            and opener_no_5card_major
+            and not opener_has_4card_support
+            and 11 <= hcp_val <= 16
+        ):
+            cand_nt = _lowest_higher_bid_for_strain(highest_contract, "NT")
+            if cand_nt is not None:
+                display = _to_display_bid(cand_nt)
+                return {
+                    "dealer": third_seat,
+                    "profile": None,
+                    "bid": cand_nt,
+                    "display_bid": display,
+                    "rule_id": "opener_rebid_1nt_balanced_after_1m_1M",
+                    "explanation": "Åbner genmelder 1NT med jævn minimumshånd efter minor-åbning og majorsvar.",
+                    "log_lines": log_lines + [
+                        f"{hand_tag} åbner: balanceret {hcp_val} HCP, form {_shape_text(ctx)}, ingen 4-k støtte til {_to_display_bid('1' + resp_strain)[1:]}.",
+                        f"{hand_tag} regel: jævn minimumsåbner genmelder 1NT frem for at vise 4-k sidefarve eller 3-k støtte.",
+                        f"{hand_tag} valg: {display}",
+                        f"{hand_tag} regel-id: opener_rebid_1nt_balanced_after_1m_1M",
                     ],
                 }
 

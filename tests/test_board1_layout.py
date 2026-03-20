@@ -1822,11 +1822,16 @@ def test_bid_scaffold_fourth_hand_avoids_enemy_suit_natural_bid():
 
 
 def test_bid_scaffold_opener_shows_four_card_major_after_minor_support():
-    """After 1♣-P-2♣-P, opener with 4 hearts should show 2♥ before raising clubs further."""
+    """After 1♣-P-2♣-P, opener with 4 hearts should show 2♥ before raising clubs further.
+
+    Ø's hand has no 4-card major so it legitimately raises to 2♣; V (the opener)
+    then probes 2♥ to show the four-card heart suit.
+    """
     df = _make_df(
         dealer='V',
         V_hand='Q6.QJ87.AK8.8532',
-        Ø_hand='A75.KT963.Q.K976',
+        # Ø: 3S-3H-2D-5C (10 HCP, no 4-card major) -> raises 2♣
+        Ø_hand='A75.K32.Q2.K9764',
         N_hand='3.A42.9632.AQJT4',
         S_hand='KJT9842.5.JT754.',
     )

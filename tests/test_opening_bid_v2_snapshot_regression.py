@@ -358,3 +358,85 @@ def test_weak_two_overcall_spades_after_1H():
     assert oe_call is not None
     assert oe_call.get("bid") == "2S", oe_call.get("rule_id")
     assert oe_call.get("rule_id") == "weak_two_competitive_overcall"
+
+
+# ---------------------------------------------------------------------------
+# Svar på minor-åbning: 4-k major vises på 1-plans niveau
+# ---------------------------------------------------------------------------
+
+def test_responder_shows_4card_heart_over_1D_not_raises_minor():
+    """V svarer 1♥ med 4 hjerter og 4 klør over 1♦ - ikke 2♦ eller 2♣."""
+    row = {
+        "dealer": "Ø",
+        # Ø: balanced 14 HCP, 4S 3H 4D 2C -> opens 1D
+        "Ø_hand": "AJ52.K32.KQ54.J2",
+        # V: 9 HCP, 2S 4H 3D 4C -> should respond 1H
+        "V_hand": "52.AJ87.932.KJ87",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    oe_call = _find_call(seq, "Ø", 1)
+    v_call = _find_call(seq, "V", 1)
+    assert oe_call is not None and oe_call.get("bid") == "1D", f"Ø bør åbne 1♦, fik {oe_call}"
+    assert v_call is not None
+    assert v_call.get("bid") == "1H", (
+        f"V bør svare 1♥ (4-k hjerter prioriterer over minor-støtte), fik {v_call.get('bid')} "
+        f"({v_call.get('rule_id')})"
+    )
+    assert v_call.get("rule_id") == "responder_one_level_major_over_minor"
+
+
+def test_responder_shows_4card_heart_over_1C_weak_hand():
+    """V svarer 1♥ med 4 hjerter + 4 klør og 7 HCP over 1♣ - 2♣ undlades."""
+    row = {
+        "dealer": "Ø",
+        # Ø: 14 HCP, 5C, below 1NT range -> opens 1C
+        "Ø_hand": "AQ2.43.K32.AJ532",
+        # V: 7 HCP, 3S 4H 3D 4C -> should respond 1H
+        "V_hand": "Q32.KJ87.932.J87",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    v_call = _find_call(seq, "V", 1)
+    assert v_call is not None
+    assert v_call.get("bid") == "1H", (
+        f"V bør svare 1♥ over 1♣, fik {v_call.get('bid')} ({v_call.get('rule_id')})"
+    )
+    assert v_call.get("rule_id") == "responder_one_level_major_over_minor"
+
+
+def test_opener_rebids_1nt_balanced_after_1d_1h():
+    """Ø genmelder 1NT (jævn 12-14 HCP) efter 1♦-1♥ - viser ikke 4♠."""
+    row = {
+        "dealer": "Ø",
+        # Ø: balanced 14 HCP, 4S 3H 4D 2C -> opens 1D, then 1NT rebid (not 1S)
+        "Ø_hand": "AJ52.K32.KQ54.J2",
+        "V_hand":  "52.AJ87.932.KJ87",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    oe_call_2 = _find_call(seq, "Ø", 2)
+    assert oe_call_2 is not None
+    assert oe_call_2.get("bid") == "1NT", (
+        f"Ø bør genholde 1NT med jævn hånd, fik {oe_call_2.get('bid')} "
+        f"({oe_call_2.get('rule_id')})"
+    )
+    assert oe_call_2.get("rule_id") == "opener_rebid_1nt_balanced_after_1m_1M"
+
+
+def test_opener_raises_2h_with_4card_support_after_1d_1h():
+    """Ø hæver til 2♥ med 4-k hjertestøtte selvom hånd er jævn."""
+    row = {
+        "dealer": "Ø",
+        # Ø: 3S 4H 4D 2C (13 HCP) -> opens 1D, then raises 2H (4-card support)
+        "Ø_hand": "A52.KJ32.KQ54.J2",
+        "V_hand":  "52.AJ87.932.KJ87",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    oe_call_2 = _find_call(seq, "Ø", 2)
+    assert oe_call_2 is not None
+    assert oe_call_2.get("bid") == "2H", (
+        f"Ø bør hæve til 2♥ med 4-k støtte, fik {oe_call_2.get('bid')} "
+        f"({oe_call_2.get('rule_id')})"
+    )
