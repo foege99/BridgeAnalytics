@@ -2150,6 +2150,128 @@ def _evaluate_michaels_cuebid(
     )
 
 
+def _nt_overcall_convention_for_seat(seat: str) -> str:
+    """Return NT overcall convention for seat's profile: landy / cappelletti / natural."""
+    _, profile_cfg = _profile_for_seat(seat)
+    return str((profile_cfg or {}).get("nt_overcall_convention") or "natural").strip().lower()
+
+
+def _evaluate_landy_over_nt(
+    ctx: dict[str, Any],
+    hand_tag: str,
+) -> tuple[str | None, str | None, str]:
+    """Landy over opponent's 1NT: 2♣ = 5-4+ in both majors, 10+ HCP.
+
+    Returns (bid, rule_id, log_line).
+    """
+    spades = int(ctx["spades"])
+    hearts = int(ctx["hearts"])
+    hcp = int(ctx["hcp"])
+    long_major = max(spades, hearts)
+    short_major = min(spades, hearts)
+
+    if long_major < 5 or short_major < 4:
+        return (
+            None,
+            None,
+            f"{hand_tag} Landy 2♣: afvist (kræver 5-4 i majorerne; "
+            f"spar={spades}, hjerter={hearts}).",
+        )
+    if hcp < 10:
+        return (
+            None,
+            None,
+            f"{hand_tag} Landy 2♣: afvist (HCP {hcp} under minimum 10).",
+        )
+    return (
+        "2C",
+        "landy_2c_both_majors",
+        f"{hand_tag} Landy 2♣: OK – 5-4 i majorerne ({spades}♠, {hearts}♥, {hcp} HCP).",
+    )
+
+
+def _evaluate_cappelletti_over_nt(
+    ctx: dict[str, Any],
+    hand_tag: str,
+) -> tuple[str | None, str | None, str]:
+    """Cappelletti over opponent's 1NT.
+
+    Bidding ladder (priority highest → lowest):
+      2♦ = 5-4+ i begge majorer, 10+ HCP
+      2♥ = 5+ hjerter + 4+ i en minor, 10+ HCP
+      2♠ = 5+ spar + 4+ i en minor, 10+ HCP
+      2NT = 5-4+ i begge minorer, 10+ HCP
+      2♣ = enfarvet hånd (6+ kort i en farve), 10+ HCP
+
+    Returns (bid, rule_id, log_line).
+    """
+    spades = int(ctx["spades"])
+    hearts = int(ctx["hearts"])
+    diamonds = int(ctx["diamonds"])
+    clubs = int(ctx["clubs"])
+    hcp = int(ctx["hcp"])
+
+    if hcp < 10:
+        return (
+            None,
+            None,
+            f"{hand_tag} Cappelletti: afvist (HCP {hcp} under minimum 10).",
+        )
+
+    long_major = max(spades, hearts)
+    short_major = min(spades, hearts)
+    long_minor = max(diamonds, clubs)
+    short_minor = min(diamonds, clubs)
+
+    # 2♦ = both majors 5-4+
+    if long_major >= 5 and short_major >= 4:
+        return (
+            "2D",
+            "cappelletti_2d_both_majors",
+            f"{hand_tag} Cappelletti 2♦: OK – begge majorer ({spades}♠, {hearts}♥, {hcp} HCP).",
+        )
+
+    # 2♥ = hearts + minor (5+H and 4+ minor)
+    if hearts >= 5 and long_minor >= 4:
+        return (
+            "2H",
+            "cappelletti_2h_hearts_minor",
+            f"{hand_tag} Cappelletti 2♥: OK – hjerter + minor ({hearts}♥, {long_minor} i bedste minor, {hcp} HCP).",
+        )
+
+    # 2♠ = spades + minor (5+S and 4+ minor)
+    if spades >= 5 and long_minor >= 4:
+        return (
+            "2S",
+            "cappelletti_2s_spades_minor",
+            f"{hand_tag} Cappelletti 2♠: OK – spar + minor ({spades}♠, {long_minor} i bedste minor, {hcp} HCP).",
+        )
+
+    # 2NT = both minors 5-4+
+    if long_minor >= 5 and short_minor >= 4:
+        return (
+            "2NT",
+            "cappelletti_2nt_both_minors",
+            f"{hand_tag} Cappelletti 2NT: OK – begge minorer ({diamonds}♦, {clubs}♣, {hcp} HCP).",
+        )
+
+    # 2♣ = any one-suiter (6+ cards in any suit)
+    best_suit_len = max(spades, hearts, diamonds, clubs)
+    if best_suit_len >= 6:
+        return (
+            "2C",
+            "cappelletti_2c_one_suiter",
+            f"{hand_tag} Cappelletti 2♣: OK – enfarvet ({best_suit_len}+ trumfkort, {hcp} HCP).",
+        )
+
+    return (
+        None,
+        None,
+        f"{hand_tag} Cappelletti: ingen passende konvention "
+        f"({spades}♠-{hearts}♥-{diamonds}♦-{clubs}♣, {hcp} HCP).",
+    )
+
+
 def _suggest_second_hand_competitive(
     row: Mapping[str, Any],
     second_seat: str,
@@ -2462,6 +2584,19 @@ def _suggest_second_hand_competitive(
     )
     log_lines.append(mc_line)
 
+    # --- Landy / Cappelletti over opponent's 1NT opening ---
+    nt_conv_bid: str | None = None
+    nt_conv_rule: str | None = None
+    if first_strain == "NT" and first_level == 1:
+        _nt_conv = _nt_overcall_convention_for_seat(second_seat)
+        if _nt_conv == "landy":
+            nt_conv_bid, nt_conv_rule, _nt_conv_line = _evaluate_landy_over_nt(ctx, hand_tag)
+        elif _nt_conv == "cappelletti":
+            nt_conv_bid, nt_conv_rule, _nt_conv_line = _evaluate_cappelletti_over_nt(ctx, hand_tag)
+        else:
+            _nt_conv_line = f"{hand_tag} NT-konvention: naturlige indmeldinger (ingen særaftale)."
+        log_lines.append(_nt_conv_line)
+
     # Priority: lead-directing doubles are explicit; otherwise allow strong long-suit overcalls to win.
     prefer_overcall = overcall_bid is not None and (
         max(suit_lens.values()) >= 6 and int(ctx["hcp"]) >= 10
@@ -2530,6 +2665,22 @@ def _suggest_second_hand_competitive(
             "log_lines": log_lines + [
                 f"{hand_tag} valg: X",
                 f"{hand_tag} regel-id: {double_rule_id}",
+            ],
+        }
+
+    # Landy / Cappelletti over opponent's 1NT takes priority over plain natural overcall.
+    if nt_conv_bid is not None:
+        nt_conv_name = "Landy" if (nt_conv_rule or "").startswith("landy") else "Cappelletti"
+        return {
+            "dealer": second_seat,
+            "profile": None,
+            "bid": nt_conv_bid,
+            "display_bid": _to_display_bid(nt_conv_bid),
+            "rule_id": nt_conv_rule,
+            "explanation": f"2. hånd vælger {nt_conv_name} over modpartens 1NT.",
+            "log_lines": log_lines + [
+                f"{hand_tag} valg: {_to_display_bid(nt_conv_bid)}",
+                f"{hand_tag} regel-id: {nt_conv_rule}",
             ],
         }
 

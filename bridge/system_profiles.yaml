@@ -47,6 +47,7 @@ system_profiles:
     rkcb_queen_ask: disabled
     rkcb_kings_ask: disabled
     rkcb_kings_response_mode: count_kings
+    nt_overcall_convention: landy
 
   henrik_per_custom:
 
@@ -98,3 +99,4 @@ system_profiles:
     rkcb_queen_ask: enabled
     rkcb_kings_ask: enabled
     rkcb_kings_response_mode: count_kings
+    nt_overcall_convention: cappelletti

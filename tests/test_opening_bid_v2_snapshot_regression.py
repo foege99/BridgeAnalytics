@@ -440,3 +440,151 @@ def test_opener_raises_2h_with_4card_support_after_1d_1h():
         f"Ø bør hæve til 2♥ med 4-k støtte, fik {oe_call_2.get('bid')} "
         f"({oe_call_2.get('rule_id')})"
     )
+
+
+# ---------------------------------------------------------------------------
+# Landy og Cappelletti over modparts 1NT
+# ---------------------------------------------------------------------------
+
+def test_landy_2c_both_majors_classic():
+    """V (EW/nordic_standard) byder 2♣ Landy med 5-5 i majorerne og 11 HCP over S's 1NT."""
+    row = {
+        "dealer": "N",
+        # N/Ø pas -> S åbner 1NT (17 HCP, jævn)
+        "N_hand": "5.JT76.JT8543.K9",
+        "S_hand": "A86.KQ32.AK6.JT5",
+        "Ø_hand": "K743..Q97.Q87632",
+        "V_hand": "QJT92.A9854.2.A4",   # 5S + 5H + 11 HCP -> Landy 2C
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    v_call = _find_call(seq, "V", 1)
+    assert v_call is not None, "V skal have en melding"
+    assert v_call.get("bid") == "2C", (
+        f"V bør byde 2♣ Landy (5-5 majorer, 11 HCP), fik {v_call.get('bid')} "
+        f"({v_call.get('rule_id')})"
+    )
+    assert v_call.get("rule_id") == "landy_2c_both_majors"
+
+
+def test_landy_2c_5_4_majors():
+    """V byder 2♣ Landy med 5-4 i majorerne (minimum) og 11 HCP."""
+    row = {
+        "dealer": "S",
+        # S: 15 HCP, balanceret 3-3-3-4 -> åbner 1NT
+        "S_hand": "A84.KJ3.AJ2.Q543",
+        "V_hand": "QJT92.AK85.73.J4",   # 5S + 4H + 11 HCP -> Landy 2C
+        "N_hand": "T73.Q764.K854.T9",
+        "Ø_hand": "K65.T2.Q96.AKJ76",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    v_call = _find_call(seq, "V", 1)
+    assert v_call is not None
+    assert v_call.get("bid") == "2C", (
+        f"V bør byde 2♣ Landy (5-4 majorer, 11 HCP), fik {v_call.get('bid')} "
+        f"({v_call.get('rule_id')})"
+    )
+    assert v_call.get("rule_id") == "landy_2c_both_majors"
+
+
+def test_landy_rejected_only_one_major():
+    """V har kun 5 spar og ingen klæbrig hjertekort -> ingen Landy, naturlig indmelding."""
+    row = {
+        "dealer": "S",
+        "S_hand": "AK4.KJ3.AJ2.Q543",   # 1NT
+        "V_hand": "QJT982.A3.K74.J4",   # 6S + 2H + 11 HCP -> naturlig 2S, ikke Landy
+        "N_hand": "T3.Q764.Q854.T92",
+        "Ø_hand": "765.JT52.963.AK76",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    v_call = _find_call(seq, "V", 1)
+    assert v_call is not None
+    assert v_call.get("bid") != "2C" or v_call.get("rule_id") != "landy_2c_both_majors", (
+        f"V bør IKKE byde Landy 2♣ med kun én major, fik {v_call.get('bid')} ({v_call.get('rule_id')})"
+    )
+
+
+def test_cappelletti_2d_both_majors():
+    """N (NS/henrik_per_custom) byder 2♦ Cappelletti med 5-5 i majorerne over V's 1NT."""
+    row = {
+        "dealer": "V",
+        # V: 15 HCP, balanceret 3-3-3-4 -> 1NT (EW åbner), N er 2. hånd
+        "V_hand": "KQ4.AJ3.K75.QT43",
+        "N_hand": "QJT92.AK854.73.4",    # 5S + 5H + 11 HCP -> Cappelletti 2D
+        "S_hand": "KT8.Q73.Q98.J653",
+        "Ø_hand": "A765.T6.J642.AT2",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    n_call = _find_call(seq, "N", 1)
+    assert n_call is not None, "N skal have en melding"
+    assert n_call.get("bid") == "2D", (
+        f"N bør byde 2♦ Cappelletti (5-5 majorer, 11 HCP), fik {n_call.get('bid')} "
+        f"({n_call.get('rule_id')})"
+    )
+    assert n_call.get("rule_id") == "cappelletti_2d_both_majors"
+
+
+def test_cappelletti_2h_hearts_minor():
+    """N byder 2♥ Cappelletti med 5 hjerter + 4 klør over V's 1NT."""
+    row = {
+        "dealer": "V",
+        # V: 15 HCP, balanceret -> 1NT, N er 2. hånd
+        "V_hand": "KQ4.AJ3.K75.QT43",
+        "N_hand": "J84.AKQ97.73.QJ87",   # 2H + 5H + 2D + 4C + 12 HCP -> 2H Cappelletti
+        "S_hand": "KT72.T63.Q98.T953",
+        "Ø_hand": "A965.85.JT642.A4",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    n_call = _find_call(seq, "N", 1)
+    assert n_call is not None
+    assert n_call.get("bid") == "2H", (
+        f"N bør byde 2♥ Cappelletti (5H + 4C, 12 HCP), fik {n_call.get('bid')} "
+        f"({n_call.get('rule_id')})"
+    )
+    assert n_call.get("rule_id") == "cappelletti_2h_hearts_minor"
+
+
+def test_cappelletti_2s_spades_minor():
+    """N byder 2♠ Cappelletti med 5 spar + 4 ruder over V's 1NT."""
+    row = {
+        "dealer": "V",
+        # V: 15 HCP, balanceret -> 1NT, N er 2. hånd
+        "V_hand": "KQ4.AJ3.K75.QT43",
+        "N_hand": "AKJ97.43.QJT8.J4",    # 5S + 2H + 4D + 2C + 12 HCP -> 2S Cappelletti
+        "S_hand": "T62.Q965.632.A97",
+        "Ø_hand": "854.KT87.A97.T653",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    n_call = _find_call(seq, "N", 1)
+    assert n_call is not None
+    assert n_call.get("bid") == "2S", (
+        f"N bør byde 2♠ Cappelletti (5S + 4D, 12 HCP), fik {n_call.get('bid')} "
+        f"({n_call.get('rule_id')})"
+    )
+    assert n_call.get("rule_id") == "cappelletti_2s_spades_minor"
+
+
+def test_cappelletti_2c_one_suiter():
+    """N byder 2♣ Cappelletti (enfarvet) med 6 ruder og 11 HCP over V's 1NT."""
+    row = {
+        "dealer": "V",
+        # V: 15 HCP, balanceret -> 1NT, N er 2. hånd
+        "V_hand": "KQ4.AJ3.K75.QT43",
+        "N_hand": "J84.T3.AKQT76.J4",    # 2S+2H+6D+2C + 11 HCP, ingen 5-4 major/minor -> 2C enfarvet
+        "S_hand": "KT72.Q965.32.T975",
+        "Ø_hand": "A965.AK87.T84.632",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    n_call = _find_call(seq, "N", 1)
+    assert n_call is not None
+    assert n_call.get("bid") == "2C", (
+        f"N bør byde 2♣ Cappelletti (enfarvet 6D, 11 HCP), fik {n_call.get('bid')} "
+        f"({n_call.get('rule_id')})"
+    )
+    assert n_call.get("rule_id") == "cappelletti_2c_one_suiter"
