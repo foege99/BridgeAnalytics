@@ -1838,6 +1838,14 @@ def _double_context_for_seat(
         _is_pass_bid(c.get("bid")) for c in partner_calls
     )
 
+    # If the doubting seat has already made a contract bid, any double is
+    # penalty-oriented (not takeout). A takeout double requires an unbid hand.
+    seat_already_bid = any(
+        _parse_contract_bid(str(c.get("bid") or "PASS").upper()) is not None
+        for c in prior_calls
+        if _normalize_seat(c.get("dealer")) == seat
+    )
+
     if latest_opp_contract is None:
         return {
             "double_type": "none",
@@ -1859,6 +1867,18 @@ def _double_context_for_seat(
         return {
             "double_type": "lead_directing",
             "context_note": "Sidste modpartsmelding er kunstig farvemelding; dobling tolkes udspilsdirigerende.",
+            "partner_has_contract": partner_has_contract,
+            "partner_only_pass_or_unbid": partner_only_pass_or_unbid,
+            "latest_opp_call": latest_opp_call,
+            "latest_opp_contract_bid": latest_bid,
+            "latest_opp_contract_level": latest_level,
+            "latest_opp_contract_strain": latest_strain,
+        }
+
+    if seat_already_bid:
+        return {
+            "double_type": "penalty",
+            "context_note": "Sædet har allerede meldt kontrakt; dobling tolkes som strafdobling.",
             "partner_has_contract": partner_has_contract,
             "partner_only_pass_or_unbid": partner_only_pass_or_unbid,
             "latest_opp_call": latest_opp_call,
