@@ -336,6 +336,52 @@ def write_board1_layout_sheet(
     for i, line in enumerate(_hand_suit_lines(dir_to_hand.get(bottom_dir))):
         _write_suit_line(ws.cell(row=15 + i, column=2), line)
 
+    # --- Bridge Solver link (row 19, col B) ---
+    _bsol_dir_en = {'N': 'N', 'S': 'S', 'Ø': 'E', 'V': 'W'}
+    _bsol_vul_en = {'-': 'None', 'NS': 'NS', 'ØV': 'EW', 'EW': 'EW', 'Alle': 'All'}
+    _bh_n = dir_to_hand.get('N')
+    _bh_s = dir_to_hand.get('S')
+    _bh_e = dir_to_hand.get('Ø')
+    _bh_w = dir_to_hand.get('V')
+    _bsol_url = None
+    if all(
+        h and not (isinstance(h, float) and pd.isna(h))
+        for h in [_bh_n, _bh_s, _bh_e, _bh_w]
+    ):
+        _bsol_dealer_val = _get_field(per_row, 'dealer', 'Dealer')
+        _bsol_zone_val = _get_field(per_row, 'vul', 'vulnerability', 'zone', 'Zone')
+        _bsol_dealer = _bsol_dir_en.get(str(_bsol_dealer_val or '').strip(), 'N')
+        _bsol_vul = _bsol_vul_en.get(str(_bsol_zone_val or '').strip(), 'None')
+        _mcn = per_row.get('mainclubno')
+        _tid = per_row.get('tournament_id')
+        _event = (
+            f"{int(_mcn)}_{int(_tid)}"
+            if _mcn is not None and _tid is not None
+            and not (isinstance(_mcn, float) and pd.isna(_mcn))
+            and not (isinstance(_tid, float) and pd.isna(_tid))
+            else 'bridge_dk'
+        )
+        _bsol_url = (
+            f"https://dds.bridgewebs.com/bsol2/ddummy.htm"
+            f"?board={target_board}"
+            f"&dealer={_bsol_dealer}"
+            f"&vul={_bsol_vul}"
+            f"&club=bridge_dk"
+            f"&event={_event}"
+            f"&north={_bh_n}"
+            f"&south={_bh_s}"
+            f"&east={_bh_e}"
+            f"&west={_bh_w}"
+        )
+    _bsol_cell = ws.cell(
+        row=19, column=2,
+        value="▶ Spil i Bridge Solver" if _bsol_url else "Bridge Solver: (hænder mangler)",
+    )
+    if _bsol_url:
+        _bsol_cell.hyperlink = _bsol_url
+        if Font is not None:
+            _bsol_cell.font = Font(color='0563C1', underline='single', bold=True)
+
     # --- Info block (A2-A5, C2-C5) ---
     contract_val = _get_field(per_row, 'contract')
     decl_val = _get_field(per_row, 'decl')
