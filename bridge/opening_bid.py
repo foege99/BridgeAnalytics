@@ -3084,9 +3084,27 @@ def _suggest_response_to_landy(
     spades = int(ctx["spades"])
     hearts = int(ctx["hearts"])
     hcp = int(ctx["hcp"])
+
+    # Distributional (shortness) bonus when supporting partner's spades:
+    # V has 5+ spades and 4+ hearts (Landy). With 4+ spade support, a short
+    # heart holding (partner's side suit) is highly valuable for ruffing.
+    shortness_bonus = 0
+    if spades >= 4:
+        if hearts == 0:
+            shortness_bonus = 3   # void in partner's side suit
+        elif hearts == 1:
+            shortness_bonus = 2   # singleton
+        elif hearts == 2:
+            shortness_bonus = 1   # doubleton
+    support_hcp = hcp + shortness_bonus
+
     log_lines = base_log + [
         f"{hand_tag} hånd: {hcp} HCP, shape {_shape_text(ctx)}.",
     ]
+    if shortness_bonus > 0:
+        log_lines.append(
+            f"{hand_tag} distributionsbonus: +{shortness_bonus} ({"renonce" if hearts == 0 else "singleton" if hearts == 1 else "doubleton"} i hjerter med {spades} spaders støtte) -> {support_hcp} støttepct."
+        )
 
     def _make(bid: str, rule: str, expl: str) -> dict[str, Any]:
         return {
@@ -3099,16 +3117,16 @@ def _suggest_response_to_landy(
             ],
         }
 
-    # 2NT = forcing, 12+ HCP
-    if hcp >= 12:
-        return _make("2NT", "landy_response_2nt_forcing", "12+ HCP – kunstig tvangssvar Landy 2NT.")
+    # 2NT = forcing, 12+ support HCP
+    if support_hcp >= 12:
+        return _make("2NT", "landy_response_2nt_forcing", f"12+ støttepct ({hcp} HCP +{shortness_bonus} dist) – kunstig tvangssvar Landy 2NT.")
 
-    # 3-level invitations with 4-card major support, 10-12 HCP
-    if 10 <= hcp <= 12:
+    # 3-level invitations with 4-card major support, 10-12 support HCP
+    if 10 <= support_hcp <= 12:
         if hearts >= 4 and hearts >= spades:
-            return _make("3H", "landy_response_3h_invitation", "10-12 HCP + 4♥ – invitation til udgang 3♥.")
+            return _make("3H", "landy_response_3h_invitation", f"10-12 støttepct ({hcp}+{shortness_bonus}) + 4♥ – invitation til udgang 3♥.")
         if spades >= 4:
-            return _make("3S", "landy_response_3s_invitation", "10-12 HCP + 4♠ – invitation til udgang 3♠.")
+            return _make("3S", "landy_response_3s_invitation", f"10-12 støttepct ({hcp}+{shortness_bonus}) + 4♠ – invitation til udgang 3♠.")
 
     # 2♦ = equal length in majors, ask partner to choose
     if abs(spades - hearts) <= 1 and (spades >= 2 or hearts >= 2):

@@ -595,12 +595,12 @@ def test_cappelletti_2c_one_suiter():
 # ---------------------------------------------------------------------------
 
 def test_landy_response_2s_prefer_spades():
-    """Ø svarer 2♠ til V's Landy 2♣ med 4 spar og 0 hjerter (spil 1-casen)."""
+    """Ø svarer 2♠ til V's Landy 2♣ med 4 spar, 0 hjerter og kun 5 HCP (lavt nok til signoff)."""
     row = {
         "dealer": "N",
         "N_hand": "5.JT76.JT8543.K9",
         "S_hand": "A86.KQ32.AK6.JT5",
-        "Ø_hand": "K743..Q97.Q87632",   # 4S + 0H + 7 HCP -> 2S
+        "Ø_hand": "K743..9763.Q8532",   # 4S + 0H + 5 HCP -> støttepct 5+3=8 < 10 -> 2S
         "V_hand": "QJT92.A9854.2.A4",
     }
     out = suggest_first_round_for_row(row)
@@ -609,9 +609,31 @@ def test_landy_response_2s_prefer_spades():
     oe_call = _find_call(seq, "Ø", 2)
     assert oe_call is not None
     assert oe_call.get("bid") == "2S", (
-        f"Ø bør svare 2♠ til Landy (4S, 0H), fik {oe_call.get('bid')} ({oe_call.get('rule_id')})"
+        f"Ø bør svare 2♠ til Landy (4S, 0H, 5 HCP), fik {oe_call.get('bid')} ({oe_call.get('rule_id')})"
     )
     assert oe_call.get("rule_id") == "landy_response_2s_prefer_spades"
+
+
+def test_landy_response_3s_invitation_with_void():
+    """Ø svarer 3♠ (invitation) med 4 spar, renonce i hjerter og 7 HCP (spil 1-casen).
+
+    7 HCP + 3 distributionsbonus (renonce i V's sidefarve hjerter) = 10 støttepkt -> invitation.
+    """
+    row = {
+        "dealer": "N",
+        "N_hand": "5.JT76.JT8543.K9",
+        "S_hand": "A86.KQ32.AK6.JT5",
+        "Ø_hand": "K743..Q97.Q87632",   # 4S + 0H + 7 HCP + renonce -> 10 støttepkt -> 3S
+        "V_hand": "QJT92.A9854.2.A4",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    oe_call = _find_call(seq, "Ø", 2)
+    assert oe_call is not None
+    assert oe_call.get("bid") == "3S", (
+        f"Ø bør svare 3♠ (invitation, 7 HCP + renonce) til Landy, fik {oe_call.get('bid')} ({oe_call.get('rule_id')})"
+    )
+    assert oe_call.get("rule_id") == "landy_response_3s_invitation"
 
 
 def test_landy_response_2h_prefer_hearts():
