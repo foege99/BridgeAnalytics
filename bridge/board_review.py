@@ -1959,6 +1959,162 @@ def write_board1_layout_sheet(
     except Exception:
         pass  # Tiest-kontrakter er best-effort; fejler aldrig hele arket
 
+    # ------------------------------------------------------------------
+    # 12. Kortspil – stikfordeling (spilfører eller forsvar)
+    #
+    # Viser histogram over antal stik i Per/Henriks aktuelle farve på
+    # tværs af alle turneringer med samme hånd (work_trav_freq).
+    # - Spilfører: flest stik øverst, H+P fremhævet
+    # - Forsvar:   færrest stik øverst (færre spilfører-stik = bedre)
+    # Skrives i kolonne E (5) under de øvrige sektioner.
+    # ------------------------------------------------------------------
+    try:
+        from collections import Counter as _KSCounter
+
+        _KS_START_COL = 5  # E
+        _KS_START_ROW = max(ws.max_row + 2, 2)
+
+        # Brug decl_val (allerede beregnet fra per_row) til at afgøre rolle
+        _ks_decl_dir = _normalize_compass(decl_val)
+        _ks_pair_dirs = target_pair_dirs if target_pair_dirs else (
+            {per_dir, {'N': 'S', 'S': 'N', 'Ø': 'V', 'V': 'Ø'}.get(per_dir, per_dir)}
+        )
+        _ks_is_declarer = (
+            _ks_decl_dir is not None and _ks_decl_dir in _ks_pair_dirs
+        )
+
+        # Stik og farvenøgle fra per_row
+        _ks_tricks_num = None
+        _ks_t_raw = _get_field(per_row, 'tricks')
+        if _ks_t_raw is not None:
+            try:
+                _ks_tricks_num = int(_ks_t_raw)
+            except (TypeError, ValueError):
+                pass
+
+        _ks_strain_key = _normalize_strain_key(_get_field(per_row, 'strain'))
+        if _ks_strain_key is None:
+            _, _ks_strain_key = _contract_level_and_strain_from_row(per_row)
+
+        _STRAIN_DK_NAME = {
+            'NT': 'Sans (UT)', 'S': 'Spar', 'H': 'Hjerter', 'D': 'Ruder', 'C': 'Klør',
+        }
+        _ks_strain_display = _STRAIN_DK_NAME.get(
+            _ks_strain_key or '', str(_ks_strain_key or '(ukendt)')
+        )
+        _ks_strain_sym = _STRAIN_DISPLAY.get(_ks_strain_key or '', _ks_strain_display)
+
+        # Saml stik fra work_trav_freq filtreret til samme farve
+        _ks_pool: list[int] = []
+        for _, _ksrow in work_trav_freq.iterrows():
+            _, _ks_row_strain = _contract_level_and_strain_from_row(_ksrow)
+            if _ks_row_strain != _ks_strain_key:
+                continue
+            _ks_t2 = _get_field(_ksrow, 'tricks')
+            if _ks_t2 is not None:
+                try:
+                    _ks_pool.append(int(_ks_t2))
+                except (TypeError, ValueError):
+                    pass
+
+        if _ks_tricks_num is not None and _ks_strain_key is not None and _ks_pool:
+            _ks_n = len(_ks_pool)
+            _ks_counts = _KSCounter(_ks_pool)
+            _ks_max_count = max(_ks_counts.values())
+
+            if _ks_is_declarer:
+                _ks_pct_more = round(
+                    sum(c for t, c in _ks_counts.items() if t > _ks_tricks_num) / _ks_n * 100
+                )
+                _ks_pct_less = round(
+                    sum(c for t, c in _ks_counts.items() if t < _ks_tricks_num) / _ks_n * 100
+                )
+                _ks_title = f"Kortspil – Stik i {_ks_strain_display}"
+                _ks_text = (
+                    f"{_ks_n} spillede en {_ks_strain_sym}-kontrakt som dig. "
+                    f"{_ks_pct_more}% tog flere stik end dig og "
+                    f"{_ks_pct_less}% tog færre stik."
+                )
+                _ks_tricks_sorted = sorted(_ks_counts.keys(), reverse=True)
+            else:
+                _ks_pct_better = round(
+                    sum(c for t, c in _ks_counts.items() if t < _ks_tricks_num) / _ks_n * 100
+                )
+                _ks_pct_worse = round(
+                    sum(c for t, c in _ks_counts.items() if t > _ks_tricks_num) / _ks_n * 100
+                )
+                _ks_title = f"Kortspil – Stik i {_ks_strain_display} (forsvar)"
+                _ks_text = (
+                    f"{_ks_n} spillede mod en {_ks_strain_sym}-kontrakt som dig. "
+                    f"{_ks_pct_better}% begrænsede spilfører til færre stik end dig "
+                    f"og {_ks_pct_worse}% gav spilfører flere stik."
+                )
+                _ks_tricks_sorted = sorted(_ks_counts.keys())  # færrest stik øverst
+
+            # ---- Overskrift ----
+            _ks_cur = _KS_START_ROW
+            _ks_tc = ws.cell(row=_ks_cur, column=_KS_START_COL, value=_ks_title)
+            _bold(_ks_tc)
+            if _styles_available:
+                _ks_tc.fill = PatternFill(fill_type='solid', fgColor='D9E8F5')
+                _thin_ks = Side(style='thin')
+                _ks_tc.border = Border(
+                    left=_thin_ks, right=_thin_ks, top=_thin_ks, bottom=_thin_ks
+                )
+            _ks_cur += 1
+
+            # ---- Kolonneoverskrifter ----
+            for _ci, _h in enumerate(['Stik', 'Antal', 'Pct', 'Fordeling']):
+                _hc = ws.cell(row=_ks_cur, column=_KS_START_COL + _ci, value=_h)
+                _apply_header_style(_hc)
+            _ks_cur += 1
+
+            # ---- Datarækker ----
+            for _ridx, _kt in enumerate(_ks_tricks_sorted):
+                _kc = _ks_counts[_kt]
+                _kpct = round(_kc / _ks_n * 100)
+                _kbar = '█' * max(1, round(_kc / _ks_max_count * 12))
+                _is_per = (_kt == _ks_tricks_num)
+                _ks_fill = _HILITE_YELLOW if _is_per else (
+                    _ZEBRA_FILL if (_ridx % 2 == 1) else None
+                )
+                for _ci, (_val, _align) in enumerate([
+                    (_kt, 'center'),
+                    (_kc, 'right'),
+                    (f"{_kpct}%", 'right'),
+                    (_kbar, 'left'),
+                ]):
+                    _dc = ws.cell(row=_ks_cur, column=_KS_START_COL + _ci)
+                    _dc.value = _val
+                    _apply_data_style(_dc, align=_align, fill_color=_ks_fill)
+                    if _ci == 3 and Font is not None:
+                        if _is_per:
+                            _dc.font = Font(bold=True, color='E65100')
+                        elif _ks_is_declarer:
+                            _dc.font = Font(color='1F6EBD')
+                        else:
+                            _dc.font = Font(color='2E7D32')
+                _ks_cur += 1
+
+            # ---- Bundtekst ----
+            _ks_cur += 1
+            _ks_fc = ws.cell(row=_ks_cur, column=_KS_START_COL, value=_ks_text)
+            if Font is not None:
+                _ks_fc.font = Font(italic=True)
+            if _styles_available:
+                _ks_fc.alignment = Alignment(horizontal='left', wrap_text=True)
+            try:
+                ws.merge_cells(
+                    start_row=_ks_cur, start_column=_KS_START_COL,
+                    end_row=_ks_cur, end_column=_KS_START_COL + 3,
+                )
+            except Exception:
+                pass
+            ws.row_dimensions[_ks_cur].height = 30
+
+    except Exception:
+        pass  # Kortspil er best-effort; fejler aldrig hele arket
+
 
 def write_last_tournament_board_layout_sheets(
     writer,
