@@ -224,6 +224,7 @@ def _build_context(hand_dot: str) -> dict[str, Any]:
     clubs = ph.lengths["C"]
     lengths_sorted = sorted([spades, hearts, diamonds, clubs], reverse=True)
 
+    _hcp_values = {"A": 4, "K": 3, "Q": 2, "J": 1}
     return {
         "hcp": int(calc_hcp(ph)),
         "spades": int(spades),
@@ -235,6 +236,8 @@ def _build_context(hand_dot: str) -> dict[str, Any]:
         "shape_shdc": (int(spades), int(hearts), int(diamonds), int(clubs)),
         "clubs_honors_AKQJ": sum(1 for ch in ph.suits["C"] if ch in "AKQJ"),
         "diamonds_honors_AKQJ": sum(1 for ch in ph.suits["D"] if ch in "AKQJ"),
+        "spades_hcp": sum(_hcp_values.get(ch, 0) for ch in ph.suits["S"]),
+        "hearts_hcp": sum(_hcp_values.get(ch, 0) for ch in ph.suits["H"]),
     }
 
 
@@ -449,6 +452,105 @@ def _evaluate_suit_opening(
     return None, None, f"{label}-check: ingen regel matchede."
 
 
+def _evaluate_weak_two(
+    ctx: dict[str, Any],
+    profile_cfg: dict[str, Any],
+    sys_def: dict[str, Any],
+) -> tuple[str | None, str | None, str]:
+    """Evaluate weak two-level major opening (2H or 2S).
+
+    Requirements (driven by YAML + house rule):
+    - Total HCP in [hcp_low, hcp_high] (default 5–10).
+    - 6+ cards in the opening major.
+    - If total HCP == 5: at least 3 of those HCP must be in the opening suit
+      (e.g. K alone = 3, Q+J = 3, A = 4 – all satisfy the requirement).
+    - Standard style: don't open 2H with a 4-card spade suit.
+    Preference: 2S over 2H when both suits qualify.
+    """
+    style = profile_cfg.get("weak_two_major_style")
+    if not style:
+        return None, None, "Svag-2-check: ingen weak_two_major_style i profil."
+
+    weak_system = (sys_def.get("weak_two_system", {}) or {}).get(style, {})
+    if not weak_system:
+        return None, None, f"Svag-2-check: stildefinition '{style}' ikke fundet."
+
+    strength = weak_system.get("strength", {}) or {}
+    hcp_range = strength.get("hcp_range", [5, 10])
+    min_hcp = int(hcp_range[0]) if hcp_range else 5
+    max_hcp = int(hcp_range[1]) if len(hcp_range) > 1 else 10
+
+    suit_length_cfg = weak_system.get("suit_length", {}) or {}
+    min_length = int(suit_length_cfg.get("minimum", 6))
+
+    total_hcp = int(ctx["hcp"])
+    spades = int(ctx["spades"])
+    hearts = int(ctx["hearts"])
+
+    if not (min_hcp <= total_hcp <= max_hcp):
+        return (
+            None,
+            None,
+            f"Svag-2-check: afvist (HCP {total_hcp} udenfor [{min_hcp},{max_hcp}]).",
+        )
+
+    # Don't preempt when the hand qualifies for a normal 1-level opening:
+    # a hand that passes the opening threshold should open at the 1-level instead.
+    threshold_ok, _ = _evaluate_opening_threshold(ctx, profile_cfg, sys_def)
+    if threshold_ok:
+        return (
+            None,
+            None,
+            f"Svag-2-check: afvist (HCP={total_hcp} opfylder 1-plans tærskel).",
+        )
+        return (
+            None,
+            None,
+            f"Svag-2-check: afvist (HCP {total_hcp} udenfor [{min_hcp},{max_hcp}]).",
+        )
+
+    # Try 2S first (higher-ranking major avoids hiding partner's major).
+    if spades >= min_length:
+        suit_hcp = int(ctx.get("spades_hcp", 0))
+        if total_hcp == min_hcp and suit_hcp < 3:
+            # 5 HCP but fewer than 3 in the spade suit – fall through to 2H.
+            pass
+        else:
+            return (
+                "2S",
+                "weak_two_spades",
+                f"Svag-2-check: 2\u2660 OK (HCP={total_hcp}, spar={spades}, spar-HCP={suit_hcp}).",
+            )
+
+    # Try 2H.
+    if hearts >= min_length:
+        suit_hcp = int(ctx.get("hearts_hcp", 0))
+        if total_hcp == min_hcp and suit_hcp < 3:
+            return (
+                None,
+                None,
+                f"Svag-2-check: afvist 2\u2665 (HCP={min_hcp}, hjerter-HCP={suit_hcp} < 3 kr\u00e6vet).",
+            )
+        # Standard style: don't open 2H with 4+ independent spades.
+        if spades >= 4:
+            return (
+                None,
+                None,
+                f"Svag-2-check: afvist 2\u2665 ({spades}-k spar skjuler major).",
+            )
+        return (
+            "2H",
+            "weak_two_hearts",
+            f"Svag-2-check: 2\u2665 OK (HCP={total_hcp}, hjerter={hearts}, hjerter-HCP={suit_hcp}).",
+        )
+
+    return (
+        None,
+        None,
+        f"Svag-2-check: afvist (ingen {min_length}+-k major; spar={spades}, hjerter={hearts}).",
+    )
+
+
 def _opening_flow_step_name(raw_step: Any) -> str | None:
     if isinstance(raw_step, str):
         step = raw_step.strip()
@@ -478,6 +580,7 @@ def _opening_flow_steps_from_list(raw_steps: Any) -> list[str]:
 
 def _opening_decision_flow_steps(sys_def: Mapping[str, Any]) -> list[str]:
     default_steps = [
+        "evaluate_weak_two_openings",
         "evaluate_opening_threshold",
         "evaluate_1NT_opening",
         "evaluate_major_opening",
@@ -666,6 +769,26 @@ def suggest_opening_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                         f"Valg: {display}",
                         f"Regel-id: {minor_rule}",
                         "Forklaring: Naturlig minor-åbning valgt fra profilregler.",
+                    ],
+                }
+            continue
+
+        if step == "evaluate_weak_two_openings":
+            w2_bid, w2_rule, w2_line = _evaluate_weak_two(ctx, profile_cfg, sys_def)
+            log_lines.append(w2_line)
+            if w2_bid:
+                display = _to_display_bid(w2_bid)
+                return {
+                    "dealer": dealer,
+                    "profile": profile_name,
+                    "bid": w2_bid,
+                    "display_bid": display,
+                    "rule_id": w2_rule,
+                    "explanation": "Svag to-åbning valgt.",
+                    "log_lines": log_lines + [
+                        f"Valg: {display}",
+                        f"Regel-id: {w2_rule}",
+                        "Forklaring: Svag to-åbning valgt.",
                     ],
                 }
             continue

@@ -263,13 +263,13 @@ system_library:
           min_hcp: 12
 
     opening_decision_flow:
+      - step: evaluate_weak_two_openings
       - step: evaluate_opening_threshold
       - step: evaluate_2C_opening
       - step: evaluate_2NT_opening
       - step: evaluate_1NT_opening
       - step: evaluate_major_opening
       - step: evaluate_minor_opening
-      - step: evaluate_weak_two_openings
       - step: evaluate_2D_special_opening
       - step: evaluate_three_level_preempts
       - step: evaluate_3NT_opening
@@ -808,7 +808,7 @@ system_library:
 
       standard_weak_two:
         strength:
-          hcp_range: [6,10]
+          hcp_range: [5,10]
 
         suit_length:
           minimum: 6

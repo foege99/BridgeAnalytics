@@ -22,13 +22,13 @@ system_library:
 
             first_round_opening:
               steps:
+                - id: evaluate_weak_two_openings
                 - id: evaluate_opening_threshold
                 - id: evaluate_2C_opening
                 - id: evaluate_2NT_opening
                 - id: evaluate_1NT_opening
                 - id: evaluate_major_opening
                 - id: evaluate_minor_opening
-                - id: evaluate_weak_two_openings
                 - id: evaluate_2D_special_opening
                 - id: evaluate_three_level_preempts
                 - id: evaluate_3NT_opening

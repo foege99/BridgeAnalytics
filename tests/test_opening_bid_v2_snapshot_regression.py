@@ -161,3 +161,81 @@ def test_v2_overlay_matches_legacy_for_opening_one_nt_choice(monkeypatch):
     v2 = _run_opening_with_optional_v2(monkeypatch, row, enabled=True)
 
     assert _opening_signature(v2) == _opening_signature(legacy)
+
+
+# ---------------------------------------------------------------------------
+# Svag 2-åbninger
+# ---------------------------------------------------------------------------
+
+def test_weak_two_spades_normal_range():
+    """7 HCP + 6-k spar -> 2♠."""
+    row = {"dealer": "S", "S_hand": "AJT984.83.742.53"}
+    out = suggest_opening_for_row(row)
+    assert out["bid"] == "2S", out["rule_id"]
+    assert out["rule_id"] == "weak_two_spades"
+
+
+def test_weak_two_hearts_three_spades():
+    """7 HCP + 6-k hjerter + 3 spar (ikke 4) -> 2♥."""
+    row = {"dealer": "N", "N_hand": "832.KQT965.742.5"}
+    out = suggest_opening_for_row(row)
+    assert out["bid"] == "2H", out["rule_id"]
+    assert out["rule_id"] == "weak_two_hearts"
+
+
+def test_weak_two_spades_five_hcp_three_in_suit():
+    """5 HCP med K+Q i spar (5 spar-HCP) -> 2♠ (mindst 3 HCP i farven opfyldt)."""
+    row = {"dealer": "V", "V_hand": "KQ9742.83.742.53"}
+    out = suggest_opening_for_row(row)
+    assert out["bid"] == "2S", out["rule_id"]
+
+
+def test_weak_two_spades_five_hcp_exactly_three_in_suit_k_only():
+    """5 HCP med K i spar (3 spar-HCP) + Q i en sidefarge -> 2♠ (grænsetilfælde OK)."""
+    row = {"dealer": "S", "S_hand": "K97532.Q3.742.53"}
+    out = suggest_opening_for_row(row)
+    assert out["bid"] == "2S", out["rule_id"]
+
+
+def test_weak_two_spades_five_hcp_only_two_in_suit_rejected():
+    """5 HCP men kun Q i spar (2 spar-HCP) -> PAS (for få HCP i farven)."""
+    row = {"dealer": "S", "S_hand": "Q97532.83.742.K5"}
+    out = suggest_opening_for_row(row)
+    assert out["bid"] == "PASS", f"Expected PASS, got {out['bid']}"
+
+
+def test_weak_two_spades_five_hcp_only_jacks_rejected():
+    """5 HCP men kun J+J i spar (2 spar-HCP) -> PAS."""
+    row = {"dealer": "S", "S_hand": "J97532.J3.742.Q5"}
+    out = suggest_opening_for_row(row)
+    assert out["bid"] == "PASS"
+
+
+def test_weak_two_hearts_four_spades_rejected():
+    """6-k hjerter men 4 spar -> PAS (gemmer major)."""
+    row = {"dealer": "N", "N_hand": "KJ74.AJT965.2.53"}
+    out = suggest_opening_for_row(row)
+    # Should not open 2H with 4 spades; 10 HCP also exceeds weak-two range.
+    assert out["bid"] != "2H", f"Forventet ikke 2H, fik {out['bid']}"
+
+
+def test_weak_two_spades_ten_hcp_upper_limit():
+    """10 HCP + 6-k spar -> 2♠ (øvre grænse)."""
+    row = {"dealer": "Ø", "Ø_hand": "AKQJ65.83.742.53"}
+    out = suggest_opening_for_row(row)
+    assert out["bid"] == "2S"
+
+
+def test_weak_two_eleven_hcp_too_strong():
+    """11 HCP + 6-k spar -> åbner 1♠ (for stærk til svag 2)."""
+    row = {"dealer": "S", "S_hand": "AKQJ65.A83.42.53"}
+    out = suggest_opening_for_row(row)
+    assert out["bid"] != "2S", f"11 HCP bør ikke åbne 2♠, fik {out['bid']}"
+
+
+def test_weak_two_v2_matches_legacy_for_spades(monkeypatch):
+    """V2 overlay producerer samme 2♠-åbning som legacy."""
+    row = {"dealer": "S", "S_hand": "AJT984.83.742.53"}
+    legacy = _run_opening_with_optional_v2(monkeypatch, row, enabled=False)
+    v2 = _run_opening_with_optional_v2(monkeypatch, row, enabled=True)
+    assert _opening_signature(legacy) == _opening_signature(v2)
