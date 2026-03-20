@@ -4425,8 +4425,20 @@ def _apply_state_ceiling_to_call(
                 or "stayman_responder_continuation_" in rule_id_txt
                 or "stayman_responder_correction" in rule_id_txt
             )
+            # Opening 1NT (3rd/4th seat after all passes): always keep – it is a
+            # hand-description, not a unilateral game commitment. The ceiling check
+            # must not suppress it just because partner's strength is unknown.
+            _prior_has_contract = any(
+                _parse_contract_bid(str(c.get("bid") or "PASS").upper()) is not None
+                for c in prior_calls
+            )
+            keep_opening_one_nt = (
+                str(out.get("bid") or "").upper() == "1NT"
+                and not _prior_has_contract
+            )
             hard_reject = (
                 (not keep_competitive_one_nt)
+                and (not keep_opening_one_nt)
                 and (not keep_stayman_artificial)
                 and (not keep_stayman_opener_rebid)
                 and (not keep_stayman_followup)
@@ -4436,6 +4448,7 @@ def _apply_state_ceiling_to_call(
                 (not keep_constructive_3nt)
                 and (not keep_game_place_major)
                 and (not keep_competitive_one_nt)
+                and (not keep_opening_one_nt)
                 and (not keep_stayman_artificial)
                 and (not keep_stayman_opener_rebid)
                 and (not keep_stayman_followup)
