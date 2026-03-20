@@ -17,7 +17,7 @@ from bridge.board_review import (
     _ROTATIONS,
     _both_names_in_df,
 )
-from bridge.opening_bid import suggest_first_round_for_row
+from bridge.opening_bid import suggest_first_round_for_row, _is_pass_bid
 
 
 # ---------------------------------------------------------------------------
@@ -1762,19 +1762,42 @@ def test_bid_scaffold_log_requested_seat_call_format_for_south_second_call():
     assert any(line.startswith('S, 2. melding: PAS: kontekst:') for line in log_lines)
 
 
-def test_auction_stops_after_three_consecutive_passes():
-    """Auction generation should stop immediately when three passes occur in a row."""
+def test_fourth_hand_opens_after_three_first_round_passes():
+    """Fourth hand with an opening hand must get to bid even if the first three players all pass.
+
+    Bridge rule: 3 consecutive passes only end the auction AFTER at least one real bid.
+    In the opening round all four seats must get a chance; only 4 passes (passed-out deal)
+    terminates the auction without a contract.
+    """
     row = {
         'dealer': 'N',
         'N_hand': '9753.862.873.954',
         'Ø_hand': '8642.743.962.T72',
         'S_hand': 'T842.95.T754.863',
-        'V_hand': 'AQJ.KQJ.AKQ.AKQJ',
+        'V_hand': 'AQJ.KQJ.AKQ.AKQJ',   # 22 HCP – must open
     }
     out = suggest_first_round_for_row(row)
     seq = out.get('call_sequence', [])
-    assert len(seq) == 3
-    assert [str(c.get('display_bid')) for c in seq] == ['PAS', 'PAS', 'PAS']
+    # First three players pass, V opens, then three more passes → 7 calls total.
+    assert len(seq) == 7
+    assert [str(c.get('display_bid')) for c in seq[:3]] == ['PAS', 'PAS', 'PAS']
+    assert not _is_pass_bid(seq[3].get('bid')), "V (22 HCP) must open, not pass"
+    assert [str(c.get('display_bid')) for c in seq[4:]] == ['PAS', 'PAS', 'PAS']
+
+
+def test_auction_passed_out_when_all_four_hands_weak():
+    """When all four players have sub-opening hands the deal is passed out in exactly 4 calls."""
+    row = {
+        'dealer': 'N',
+        'N_hand': '9753.862.873.954',   # ~4 HCP
+        'Ø_hand': '8642.743.962.T72',   # ~2 HCP
+        'S_hand': 'T842.95.T754.863',   # ~2 HCP
+        'V_hand': 'KJ6.AT4.JT6.QJ85',  # ~11 HCP – not enough to open
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get('call_sequence', [])
+    assert len(seq) == 4
+    assert all(_is_pass_bid(c.get('bid')) for c in seq), "All four seats pass → passed-out deal"
 
 
 def test_bid_scaffold_fourth_hand_avoids_enemy_suit_natural_bid():

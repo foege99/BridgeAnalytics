@@ -4045,9 +4045,17 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
     max_calls = 20
 
     for call_no in range(2, max_calls + 1):
-        # Stop condition: three passes in a row.
+        # Stop condition: three consecutive passes AFTER a real bid (normal end of auction),
+        # OR four consecutive passes with no real bid at all (passed-out deal).
+        # The "3 passes" rule only kicks in once at least one contract bid has been made;
+        # in the first round every hand must get a chance to open before the deal is abandoned.
         if len(call_sequence) >= 3 and all(_is_pass_bid(c.get("bid")) for c in call_sequence[-3:]):
-            break
+            has_real_bid = any(
+                _parse_contract_bid(str(c.get("bid") or "PASS").upper()) is not None
+                for c in call_sequence
+            )
+            if has_real_bid or len(call_sequence) >= 4:
+                break
 
         seat = order[(call_no - 1) % 4]
         hand_tag = f"{call_no}H"
