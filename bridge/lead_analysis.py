@@ -512,12 +512,20 @@ def add_lead_analysis_features(df: pd.DataFrame) -> pd.DataFrame:
     - trump_lead
     - lead_profile_match
     - exclude_from_lead_stats
+
+    Also adds double-dummy lead quality columns via dd_enrich:
+    - lead_dd_tricks      : declarer tricks achievable after the actual lead
+    - dd_best_lead        : canonical key of the best defensive lead (e.g. "C3")
+    - dd_best_lead_tricks : declarer tricks after the best defensive lead
+    - lead_cost           : lead_dd_tricks - dd_best_lead_tricks  (0 = optimal)
     """
     out = df.copy()
 
     if out.empty:
         for field in _OUTPUT_FIELDS:
             out[field] = pd.Series(dtype=object)
+        for col in ["lead_dd_tricks", "dd_best_lead", "dd_best_lead_tricks", "lead_cost"]:
+            out[col] = pd.Series(dtype=object)
         return out
 
     derived = out.apply(_analyze_row, axis=1)
@@ -527,4 +535,14 @@ def add_lead_analysis_features(df: pd.DataFrame) -> pd.DataFrame:
             derived[field] = _default_output().get(field)
 
     out = pd.concat([out, derived[_OUTPUT_FIELDS]], axis=1)
+
+    # DD lead enrichment (requires endplay / dd_enrich module)
+    try:
+        from bridge.dd_enrich import enrich_lead_tables  # noqa: PLC0415
+        out = enrich_lead_tables(out)
+    except Exception:  # noqa: BLE001 — endplay unavailable or data issue
+        for col in ["lead_dd_tricks", "dd_best_lead", "dd_best_lead_tricks", "lead_cost"]:
+            if col not in out.columns:
+                out[col] = None
+
     return out

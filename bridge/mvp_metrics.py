@@ -234,6 +234,11 @@ def add_mvp_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
     C. Lead & defence
       lead_suit, lead_card
+
+    Note: double-dummy lead quality columns (lead_dd_tricks, dd_best_lead,
+    dd_best_lead_tricks, lead_cost) are added upstream by
+    add_lead_analysis_features() which calls dd_enrich.enrich_lead_tables().
+    If those columns are present in df they are preserved as-is.
     """
     out = df.copy()
 

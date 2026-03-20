@@ -1267,7 +1267,234 @@ def write_board1_layout_sheet(
             info_cell.font = Font(italic=True)
 
     # ------------------------------------------------------------------
-    # 9. Frekvenstavlen (samlet, genberegnet MP/procent)
+    # 9. DD Udspils-tabeller pr. kontrakt-gruppe (Endplay)
+    #    Top-3 mest hyppige (farve + side NS/ØV) fra travelleren
+    # ------------------------------------------------------------------
+    _DD_LEAD_START_COL = 5  # E
+
+    _SUIT_LETTER_TO_SYM = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
+    _DD_LEAD_RANK_ORDER = {
+        "A": 0, "K": 1, "Q": 2, "J": 3, "T": 4,
+        "9": 5, "8": 6, "7": 7, "6": 8, "5": 9, "4": 10, "3": 11, "2": 12,
+    }
+    _DD_LEAD_SUIT_ORDER = {"S": 0, "H": 1, "D": 2, "C": 3}
+
+    def _card_key_to_display(key: str) -> str:
+        suit_letter = key[0] if key else ""
+        rank = key[1:] if len(key) > 1 else ""
+        return f"{_SUIT_LETTER_TO_SYM.get(suit_letter, suit_letter)}{rank}"
+
+    def _card_sort_key(key: str):
+        return (
+            _DD_LEAD_SUIT_ORDER.get(key[0] if key else "", 99),
+            _DD_LEAD_RANK_ORDER.get(key[1:] if key else "", 99),
+        )
+
+    _STRAIN_KEY_TO_SYM2: dict[str, str] = {
+        "NT": "NT", "S": "♠", "H": "♥", "D": "♦", "C": "♣",
+    }
+    _LHOOF = {"N": "Ø", "Ø": "S", "S": "V", "V": "N"}
+
+    # Load endplay helpers (best-effort)
+    _lt_endplay_ok = False
+    _compute_lt_fn = None
+    _parse_lead_fn2 = None
+    _gdh_fn = None
+    _gcl_fn = None
+    _scl_fn = None
+    try:
+        from bridge.dd_compute import compute_lead_table as _clt2, parse_lead_card as _plc2
+        from bridge.dd_cache import (
+            get_deal_hash as _gdh2,
+            get_lead_table as _gcl2,
+            save_lead_table as _scl2,
+        )
+        _compute_lt_fn = _clt2
+        _parse_lead_fn2 = _plc2
+        _gdh_fn = _gdh2
+        _gcl_fn = _gcl2
+        _scl_fn = _scl2
+        _lt_endplay_ok = True
+    except ImportError:
+        pass
+
+    def _grp_lead_table(row_dict: dict, strain_key: str, decl_dir: str) -> dict[str, int]:
+        """Return (cached or freshly computed) DD lead table for given strain+declarer."""
+        if not _lt_endplay_ok:
+            return {}
+        try:
+            _dh = _gdh_fn(row_dict)
+            if not _dh:
+                return {}
+            _cached = _gcl_fn(_dh, strain_key, decl_dir)
+            if _cached is not None:
+                return _cached
+            _override = dict(row_dict)
+            _override["strain"] = _STRAIN_KEY_TO_SYM2.get(strain_key, strain_key)
+            _override["decl"] = decl_dir
+            _tbl = _compute_lt_fn(_override)
+            if _tbl:
+                _scl_fn(_dh, strain_key, decl_dir, _tbl)
+            return _tbl or {}
+        except Exception:
+            return {}
+
+    # Build contract-group frequency table from traveller.
+    # Group key = (strain_key, declaring_side).
+    _grp_cnt: dict[tuple[str, str], int] = {}
+    _grp_decl: dict[tuple[str, str], dict[str, int]] = {}
+    for _, _tr in df_trav.iterrows():
+        _, _sk = _contract_level_and_strain_from_row(_tr)
+        _dr = _normalize_compass(_row_nonnull(_tr, 'decl'))
+        if _sk is None or _dr is None:
+            continue
+        _sd = _declarer_side_from_decl(_dr)
+        if _sd is None:
+            continue
+        _gk = (_sk, _sd)
+        _grp_cnt[_gk] = _grp_cnt.get(_gk, 0) + 1
+        if _gk not in _grp_decl:
+            _grp_decl[_gk] = {}
+        _grp_decl[_gk][_dr] = _grp_decl[_gk].get(_dr, 0) + 1
+
+    _top3 = sorted(_grp_cnt, key=lambda k: -_grp_cnt[k])[:3]
+
+    # Section title
+    _DDL_SEC_ROW = ws.max_row + 2
+    _sec_hdr = ws.cell(
+        row=_DDL_SEC_ROW,
+        column=_DD_LEAD_START_COL,
+        value="DD Udspils-tabeller pr. kontrakt-gruppe (Endplay)",
+    )
+    _bold(_sec_hdr)
+
+    ws.column_dimensions['F'].width = 18
+    ws.column_dimensions['G'].width = 22
+    ws.column_dimensions['H'].width = 20
+
+    _DL_HEADERS = ["Udspil", "Spilfører-tricks", "Forskel fra bedste", ""]
+
+    _dl_cur = _DDL_SEC_ROW + 2
+
+    if not _top3:
+        _nc = ws.cell(row=_dl_cur, column=_DD_LEAD_START_COL,
+                      value="Ingen kontrakt-data i travelleren")
+        if Font is not None:
+            _nc.font = Font(italic=True)
+    elif not _lt_endplay_ok:
+        _nc = ws.cell(row=_dl_cur, column=_DD_LEAD_START_COL,
+                      value="endplay ikke installeret – DD udspils-tabeller ikke tilgængelige")
+        if Font is not None:
+            _nc.font = Font(italic=True)
+    else:
+        _per_row_dict = per_row.to_dict()
+
+        # Actual lead key from per_row (for highlighting)
+        _actual_key_g: str | None = None
+        try:
+            _actual_key_g = _parse_lead_fn2(lead_val)
+        except Exception:
+            pass
+
+        # per_row's own contract group – highlight actual lead only in matching table
+        _per_strain_k = _normalize_strain_key(per_row.get("strain"))
+        if _per_strain_k is None:
+            _, _per_strain_k = _contract_level_and_strain_from_row(per_row)
+        _per_side = _declarer_side_from_decl(per_row.get("decl"))
+
+        for (_gsk, _gside) in _top3:
+            _gcnt = _grp_cnt[(_gsk, _gside)]
+            _dmap = _grp_decl.get((_gsk, _gside), {})
+            # Most common specific declarer direction within this group
+            _best_decl_g = max(_dmap, key=lambda d: (_dmap[d], d)) if _dmap else None
+            if _best_decl_g is None:
+                continue
+
+            _sym = _STRAIN_DISPLAY.get(_gsk, _gsk)
+            _ldr = _LHOOF.get(_best_decl_g, "?")
+            _grp_label = (
+                f"DD Udspil: {_sym} – {_gside}-side  "
+                f"(N={_gcnt}, spilfører: {_best_decl_g}, udspil fra: {_ldr})"
+            )
+            _gtc = ws.cell(row=_dl_cur, column=_DD_LEAD_START_COL)
+            _write_with_red_suits(_gtc, _grp_label)
+            _bold(_gtc)
+            _dl_cur += 1
+
+            _grp_tbl = _grp_lead_table(_per_row_dict, _gsk, _best_decl_g)
+
+            if not _grp_tbl:
+                _ec = ws.cell(row=_dl_cur, column=_DD_LEAD_START_COL,
+                              value="Ingen DD lead-data for dette spil")
+                if Font is not None:
+                    _ec.font = Font(italic=True)
+                _dl_cur += 3
+                continue
+
+            # Header row
+            for _ci, _hdr in enumerate(_DL_HEADERS):
+                _hc = ws.cell(row=_dl_cur, column=_DD_LEAD_START_COL + _ci, value=_hdr)
+                if _hdr:
+                    _apply_header_style(_hc)
+            _dl_cur += 1
+
+            _g_best_k = min(_grp_tbl, key=lambda k: (_grp_tbl[k], k))
+            _g_best_tricks = _grp_tbl[_g_best_k]
+
+            # Only highlight "actual lead" in the table that matches per_row's contract
+            _show_actual = (
+                _per_strain_k == _gsk
+                and _per_side == _gside
+                and _actual_key_g is not None
+            )
+
+            for _ck in sorted(_grp_tbl, key=_card_sort_key):
+                _trk = _grp_tbl[_ck]
+                _dif = _trk - _g_best_tricks
+                _ia = _show_actual and _ck == _actual_key_g
+                _ib = _ck == _g_best_k
+                _rfill = _HILITE_YELLOW if _ia else None
+                _disp = _card_key_to_display(_ck)
+
+                _flg = ""
+                if _ia and _ib:
+                    _flg = "← Faktisk udspil (bedste!)"
+                elif _ia:
+                    _flg = "← Faktisk udspil"
+                elif _ib:
+                    _flg = "← Bedste udspil"
+
+                _cc2 = ws.cell(row=_dl_cur, column=_DD_LEAD_START_COL)
+                _write_with_red_suits(_cc2, _disp)
+                _apply_data_style(_cc2, align='center', fill_color=_rfill)
+                if _ib and _styles_available:
+                    _cc2.fill = PatternFill(fill_type='solid', fgColor='EAF4E3')
+                if _ia and _styles_available:
+                    _cc2.fill = PatternFill(fill_type='solid', fgColor=_HILITE_YELLOW)
+
+                _tc2 = ws.cell(row=_dl_cur, column=_DD_LEAD_START_COL + 1, value=_trk)
+                _apply_data_style(_tc2, align='right', fill_color=_rfill)
+                if _ib and not _ia and _styles_available:
+                    _tc2.fill = PatternFill(fill_type='solid', fgColor='EAF4E3')
+
+                _dc2 = ws.cell(row=_dl_cur, column=_DD_LEAD_START_COL + 2, value=_dif)
+                _apply_data_style(_dc2, align='right', fill_color=_rfill)
+                if _ib and not _ia and _styles_available:
+                    _dc2.fill = PatternFill(fill_type='solid', fgColor='EAF4E3')
+
+                _fc2 = ws.cell(row=_dl_cur, column=_DD_LEAD_START_COL + 3, value=_flg)
+                _apply_data_style(_fc2, align='left', fill_color=_rfill)
+                if _ib and not _ia and _styles_available:
+                    _fc2.fill = PatternFill(fill_type='solid', fgColor='EAF4E3')
+                if _flg and Font is not None:
+                    _fc2.font = Font(bold=True, color='000000')
+
+                _dl_cur += 1
+
+            _dl_cur += 2  # blank rows between tables
+
+    # ------------------------------------------------------------------
+    # 10. Frekvenstavlen (samlet, genberegnet MP/procent)
     # ------------------------------------------------------------------
     _FREQ_MIN_START_ROW = 49
     _FREQ_START_COL = 5  # E
