@@ -588,3 +588,87 @@ def test_cappelletti_2c_one_suiter():
         f"({n_call.get('rule_id')})"
     )
     assert n_call.get("rule_id") == "cappelletti_2c_one_suiter"
+
+
+# ---------------------------------------------------------------------------
+# Landy responses (partner byder Landy 2♣ = begge majorer)
+# ---------------------------------------------------------------------------
+
+def test_landy_response_2s_prefer_spades():
+    """Ø svarer 2♠ til V's Landy 2♣ med 4 spar og 0 hjerter (spil 1-casen)."""
+    row = {
+        "dealer": "N",
+        "N_hand": "5.JT76.JT8543.K9",
+        "S_hand": "A86.KQ32.AK6.JT5",
+        "Ø_hand": "K743..Q97.Q87632",   # 4S + 0H + 7 HCP -> 2S
+        "V_hand": "QJT92.A9854.2.A4",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    # Ø's 1st call = PASS (som åbner); Ø's 2nd call = Landy-svar
+    oe_call = _find_call(seq, "Ø", 2)
+    assert oe_call is not None
+    assert oe_call.get("bid") == "2S", (
+        f"Ø bør svare 2♠ til Landy (4S, 0H), fik {oe_call.get('bid')} ({oe_call.get('rule_id')})"
+    )
+    assert oe_call.get("rule_id") == "landy_response_2s_prefer_spades"
+
+
+def test_landy_response_2h_prefer_hearts():
+    """Ø svarer 2♥ til V's Landy 2♣ med 0 spar og 4 hjerter."""
+    row = {
+        "dealer": "S",
+        "S_hand": "A84.KJ3.AJ2.Q543",   # 15 HCP -> 1NT
+        "V_hand": "QJT92.AK854.2.A4",   # Landy 2C (5S+5H)
+        "N_hand": "T73.Q764.K854.T9",
+        "Ø_hand": ".QT986.Q9632.J87",   # 0S + 5H + 5 HCP -> 2H
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    # Ø er dealer her, så Ø's 1. kald er PAS (åbner), 2. kald er Landy-svar
+    oe_call = _find_call(seq, "Ø", 1)  # dealer=S: Ø har ingen PAS før Landy-svar
+    assert oe_call is not None
+    assert oe_call.get("bid") == "2H", (
+        f"Ø bør svare 2♥ til Landy (0S, 5H), fik {oe_call.get('bid')} ({oe_call.get('rule_id')})"
+    )
+    assert oe_call.get("rule_id") == "landy_response_2h_prefer_hearts"
+
+
+def test_landy_response_2d_equal_majors():
+    """Ø svarer 2♦ (kunstig) med 3-3 i majorerne – beder V vælge."""
+    row = {
+        "dealer": "S",
+        "S_hand": "A84.KJ3.AJ2.Q543",   # 15 HCP -> 1NT
+        "V_hand": "QJT92.AK854.2.A4",   # Landy 2C
+        "N_hand": "T73.Q764.K854.T9",
+        "Ø_hand": "K82.Q93.Q963.J87",   # 3S + 3H + 8 HCP -> 2D (equal majors)
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    # dealer=S: Ø har ingen åbner-PAS, første kald = Landy-svar
+    oe_call = _find_call(seq, "Ø", 1)
+    assert oe_call is not None
+    assert oe_call.get("bid") == "2D", (
+        f"Ø bør svare 2♦ med 3-3 i majorerne, fik {oe_call.get('bid')} ({oe_call.get('rule_id')})"
+    )
+    assert "landy_response_2d" in oe_call.get("rule_id", "")
+
+
+def test_landy_response_3h_invitation():
+    """Ø svarer 3♥ (invitation) med 4 hjerter og 10 HCP til V's Landy."""
+    row = {
+        "dealer": "S",
+        "S_hand": "A84.KJ3.AJ2.Q543",   # 15 HCP -> 1NT
+        "V_hand": "KJT92.AK854.2.A4",   # Landy 2C (11 HCP)
+        "N_hand": "T73.Q764.K854.T9",
+        "Ø_hand": "Q82.AJT6.Q963.J8",   # 3S + 4H + 10 HCP (A+J hjerter) -> 3H invitation
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    # dealer=S: Ø har ingen åbner-PAS, første kald = Landy-svar
+    oe_call = _find_call(seq, "Ø", 1)
+    assert oe_call is not None
+    assert oe_call.get("bid") == "3H", (
+        f"Ø bør svare 3♥ (invitation, 4H 10 HCP) til Landy, fik {oe_call.get('bid')} ({oe_call.get('rule_id')})"
+    )
+    assert oe_call.get("rule_id") == "landy_response_3h_invitation"

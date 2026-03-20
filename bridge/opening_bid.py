@@ -3031,6 +3031,79 @@ def _suggest_response_after_partner_takeout_double(
     }
 
 
+def _suggest_response_to_landy(
+    row: Mapping[str, Any],
+    seat: str,
+    opp_highest: str | None,
+    hand_tag: str = "3H",
+) -> dict[str, Any]:
+    """Respond to partner's Landy 2♣ (shows 5-4+ in both majors).
+
+    Responses (standard Landy structure):
+      2♦  – artificial: equal length in majors, asks partner to pick
+      2♥  – natural signoff: prefer hearts
+      2♠  – natural signoff: prefer spades
+      2NT – artificial forcing (12+ HCP), asks partner to clarify shape
+      3♥  – invitational (10-12 HCP) with 4-card heart support
+      3♠  – invitational (10-12 HCP) with 4-card spade support
+    """
+    hand_col = f"{seat}_hand"
+    hand_dot = row.get(hand_col)
+    base_log = [
+        f"{hand_tag} kontekst: makker har meldt Landy 2♣ (5-4+ i begge majorer).",
+    ]
+    if hand_dot is None or str(hand_dot).strip() in ("", "None"):
+        return {
+            "dealer": seat, "profile": None, "bid": "PASS", "display_bid": "PAS",
+            "rule_id": "landy_response_hand_missing",
+            "explanation": f"{seat} mangler håndata; PAS.",
+            "log_lines": base_log + [f"{hand_tag} valg: PAS", f"{hand_tag} regel-id: landy_response_hand_missing"],
+        }
+
+    ctx = _build_context(str(hand_dot))
+    spades = int(ctx["spades"])
+    hearts = int(ctx["hearts"])
+    hcp = int(ctx["hcp"])
+    log_lines = base_log + [
+        f"{hand_tag} hånd: {hcp} HCP, shape {_shape_text(ctx)}.",
+    ]
+
+    def _make(bid: str, rule: str, expl: str) -> dict[str, Any]:
+        return {
+            "dealer": seat, "profile": None,
+            "bid": bid, "display_bid": _to_display_bid(bid),
+            "rule_id": rule, "explanation": expl,
+            "log_lines": log_lines + [
+                f"{hand_tag} valg: {_to_display_bid(bid)}",
+                f"{hand_tag} regel-id: {rule}",
+            ],
+        }
+
+    # 2NT = forcing, 12+ HCP
+    if hcp >= 12:
+        return _make("2NT", "landy_response_2nt_forcing", "12+ HCP – kunstig tvangssvar Landy 2NT.")
+
+    # 3-level invitations with 4-card major support, 10-12 HCP
+    if 10 <= hcp <= 12:
+        if hearts >= 4 and hearts >= spades:
+            return _make("3H", "landy_response_3h_invitation", "10-12 HCP + 4♥ – invitation til udgang 3♥.")
+        if spades >= 4:
+            return _make("3S", "landy_response_3s_invitation", "10-12 HCP + 4♠ – invitation til udgang 3♠.")
+
+    # 2♦ = equal length in majors, ask partner to choose
+    if abs(spades - hearts) <= 1 and (spades >= 2 or hearts >= 2):
+        return _make("2D", "landy_response_2d_equal_majors", "Lige mange kort i begge majorer – 2♦ beder makker vælge.")
+
+    # 2♥ / 2♠ = signoff with clear major preference
+    if hearts > spades:
+        return _make("2H", "landy_response_2h_prefer_hearts", f"{hearts}♥ > {spades}♠ – vælger 2♥.")
+    if spades >= hearts:
+        return _make("2S", "landy_response_2s_prefer_spades", f"{spades}♠ >= {hearts}♥ – vælger 2♠.")
+
+    # Fallback
+    return _make("2D", "landy_response_2d_equal_majors_fallback", "Fallback: 2♦ beder makker vælge major.")
+
+
 def _suggest_third_hand_after_partner_open(
     row: Mapping[str, Any],
     third_seat: str,
@@ -4735,6 +4808,22 @@ def suggest_first_round_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
                 p = _parse_contract_bid(b)
                 if p is not None:
                     reserved.append(p[1])
+
+            # If partner's last action was Landy 2♣ (artificial – both majors),
+            # respond using Landy convention instead of natural third-hand logic.
+            _partner_last_rule_id = str((partner_last_call or {}).get("rule_id") or "")
+            if "landy_2c_both_majors" in _partner_last_rule_id:
+                call = _suggest_response_to_landy(
+                    row,
+                    seat,
+                    opp_highest,
+                    hand_tag=hand_tag,
+                )
+                call = _legalize_competitive_contract(call, highest_contract, hand_tag, prior_calls=call_sequence)
+                call = _apply_state_ceiling_to_call(row, call_sequence, seat, call, hand_tag)
+                call_sequence.append(call)
+                continue
+
             call = _suggest_third_hand_after_partner_open(
                 row,
                 seat,
