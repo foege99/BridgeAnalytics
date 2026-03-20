@@ -38,6 +38,7 @@ system_profiles:
 
     jordan_2nt: disabled
     lead_directing_doubles: enabled
+    cuebid_overcall_style: michaels
     cuebid_control_type: first_or_second_round
     splinter_mode: disabled
     fourth_suit_forcing: enabled
@@ -88,6 +89,7 @@ system_profiles:
 
     jordan_2nt: disabled
     lead_directing_doubles: enabled
+    cuebid_overcall_style: michaels
     cuebid_control_type: first_or_second_round
     splinter_mode: enabled
     fourth_suit_forcing: enabled

@@ -239,3 +239,122 @@ def test_weak_two_v2_matches_legacy_for_spades(monkeypatch):
     legacy = _run_opening_with_optional_v2(monkeypatch, row, enabled=False)
     v2 = _run_opening_with_optional_v2(monkeypatch, row, enabled=True)
     assert _opening_signature(legacy) == _opening_signature(v2)
+
+
+# ---------------------------------------------------------------------------
+# Kompetitative 2-indmeldinger (svag 2-indmelding + Michaels cuebid)
+# ---------------------------------------------------------------------------
+
+def _find_call(seq, seat, call_no=1):
+    n = 0
+    for c in seq:
+        if str(c.get("dealer", "")) == seat:
+            n += 1
+            if n == call_no:
+                return c
+    return None
+
+
+def test_weak_two_overcall_spades_after_1C():
+    """Ø med 6 spar og 5 HCP indmelder 2♠ efter N åbner 1♣."""
+    row = {
+        "dealer": "N",
+        # N: 14 HCP, 5 klør, 3-2-3-5, under 1NT-område -> åbner 1♣
+        "N_hand": "AQ2.43.K32.AJ532",
+        # Ø: 5 HCP (K+Q i spar), 6 spar -> svag 2-indmelding
+        "Ø_hand": "KQT965.83.742.53",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    n_call = _find_call(seq, "N", 1)
+    oe_call = _find_call(seq, "Ø", 1)
+    assert n_call is not None and n_call.get("bid") == "1C", f"N bør åbne 1♣, fik {n_call}"
+    assert oe_call is not None
+    assert oe_call.get("bid") == "2S", oe_call.get("rule_id")
+    assert oe_call.get("rule_id") == "weak_two_competitive_overcall"
+
+
+def test_weak_two_overcall_hearts_after_1C():
+    """Ø med 6 hjerter og 5 HCP indmelder 2♥ efter N åbner 1♣."""
+    row = {
+        "dealer": "N",
+        "N_hand": "AQ2.43.K32.AJ532",
+        # Ø: 5 HCP (K+Q i hjerter), 6 hjerter, 2 spar -> svag 2♥
+        "Ø_hand": "83.KQT965.742.53",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    oe_call = _find_call(seq, "Ø", 1)
+    assert oe_call is not None
+    assert oe_call.get("bid") == "2H", oe_call.get("rule_id")
+    assert oe_call.get("rule_id") == "weak_two_competitive_overcall"
+
+
+def test_michaels_cuebid_2D_over_1C():
+    """Ø med 5-5 i majorerne (7 HCP) indmelder Michaels 2♦ over N 1♣."""
+    row = {
+        "dealer": "N",
+        "N_hand": "AQ2.43.K32.AJ532",
+        # Ø: K(3) i spar + K(3)+J(1) i hjerter = 7 HCP, 5 spar + 5 hjerter
+        "Ø_hand": "KT965.KJ874.2.53",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    oe_call = _find_call(seq, "Ø", 1)
+    assert oe_call is not None
+    assert oe_call.get("bid") == "2D", oe_call.get("rule_id")
+    assert oe_call.get("rule_id") == "michaels_cuebid_over_minor"
+
+
+def test_weak_two_overcall_hearts_after_1D():
+    """Ø med 6 hjerter og 5 HCP indmelder 2♥ efter N åbner 1♦."""
+    row = {
+        "dealer": "N",
+        # N: 12 HCP, 5 ruder, 3-2-5-3 shape -> åbner 1♦
+        "N_hand": "AJ2.43.KJ874.K32",
+        "Ø_hand": "83.KQT965.742.53",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    n_call = _find_call(seq, "N", 1)
+    oe_call = _find_call(seq, "Ø", 1)
+    assert n_call is not None and n_call.get("bid") == "1D", f"N bør åbne 1♦, fik {n_call}"
+    assert oe_call is not None
+    assert oe_call.get("bid") == "2H", oe_call.get("rule_id")
+    assert oe_call.get("rule_id") == "weak_two_competitive_overcall"
+
+
+def test_two_D_over_1D_blocked_as_michaels_not_natural():
+    """Ø med 6 ruder kan IKKE indmelde 2♦ naturligt over 1♦ (er Michaels cuebid)."""
+    row = {
+        "dealer": "N",
+        "N_hand": "AJ2.43.KJ874.K32",
+        # Ø: 7 HCP, 6 ruder - 2♦ er modpartens farve/Michaels -> PAS
+        "Ø_hand": "83.QJ2.KJT965.53",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    oe_call = _find_call(seq, "Ø", 1)
+    assert oe_call is not None
+    assert oe_call.get("bid") == "PASS", (
+        f"Ø bør ikke indmelde 2♦ naturligt over 1♦, fik {oe_call.get('bid')} "
+        f"({oe_call.get('rule_id')})"
+    )
+
+
+def test_weak_two_overcall_spades_after_1H():
+    """Ø med 6 spar og 5 HCP indmelder 2♠ efter N åbner 1♥."""
+    row = {
+        "dealer": "N",
+        # N: 11 HCP, 5 hjerter -> åbner 1♥
+        "N_hand": "AJ2.KJ853.842.K32",
+        "Ø_hand": "KQT965.83.742.53",
+    }
+    out = suggest_first_round_for_row(row)
+    seq = out.get("call_sequence", [])
+    n_call = _find_call(seq, "N", 1)
+    oe_call = _find_call(seq, "Ø", 1)
+    assert n_call is not None and n_call.get("bid") == "1H", f"N bør åbne 1♥, fik {n_call}"
+    assert oe_call is not None
+    assert oe_call.get("bid") == "2S", oe_call.get("rule_id")
+    assert oe_call.get("rule_id") == "weak_two_competitive_overcall"

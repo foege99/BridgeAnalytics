@@ -1150,6 +1150,12 @@ def _system_def_for_seat(seat: str) -> dict[str, Any]:
     return _pick_system_def(profile_cfg, bundle)
 
 
+def _profile_cfg_for_seat(seat: str) -> dict[str, Any]:
+    bundle = _load_bundle()
+    _, profile_cfg = _pick_profile(seat, bundle)
+    return profile_cfg or {}
+
+
 def _hand_strength_model_for_seat(seat: str) -> dict[str, Any]:
     sys_def = _system_def_for_seat(seat)
     return (sys_def.get("hand_strength_model", {}) or {}) if isinstance(sys_def, Mapping) else {}
@@ -1948,6 +1954,202 @@ def _opening_from_specific_seat(row: Mapping[str, Any], seat: str, note: str) ->
     return out
 
 
+def _michaels_cuebid_suit_over(opening_strain: str, profile_cfg: dict[str, Any]) -> str | None:
+    """Return the strain that is the Michaels cuebid OVER the given opening strain.
+
+    In virtually all systems the cuebid = repeat of opponent's suit:
+    - 1C → 2C (Michaels, shows both majors)
+    - 1D → 2D (Michaels, shows both majors)
+    - 1H → 2H (Michaels, shows other major + unspecified minor)
+    - 1S → 2S (Michaels, shows hearts + unspecified minor)
+
+    However, when the opponent's club opening is potentially short (<= 2 cards,
+    style 'short_club_2plus') the cuebid shifts one step:
+    - 1C → 2D (Michaels, because 2C would be natural clubs)
+
+    Returns the cuebid strain if the profile plays Michaels in this position,
+    or None if no Michaels agreement.
+    """
+    # We only recognise Michaels if the profile explicitly names michaels_cuebid_style
+    # OR if the cuebid_overcall section in YAML uses style=michaels (default).
+    # Rather than parse deep YAML here, check the profile's minor_style:
+    # short_club_2plus → 2C is reserved for natural clubs → 2D is Michaels over 1C.
+    # Otherwise the cuebid is always the repeated suit.
+    if opening_strain not in ("C", "D", "H", "S"):
+        return None
+
+    michaels_style = str(profile_cfg.get("cuebid_overcall_style") or "michaels").lower()
+    if "michaels" not in michaels_style and michaels_style not in ("", "default", "standard"):
+        return None  # playing something else (e.g. colorful cuebid) – not implemented
+
+    if opening_strain == "C":
+        minor_style = str(profile_cfg.get("minor_style") or "").lower()
+        if "short_club" in minor_style or "short_club_2plus" in minor_style:
+            # 2C = natural clubs (genuine 6+ clubs), 2D = Michaels (both majors)
+            return "D"
+        # Natural / best-minor 3+: 2C itself is the cuebid
+        return "C"
+
+    # For all other openings: cuebid = repeat of opponent's suit
+    return opening_strain
+
+
+def _is_michaels_position(
+    opening_strain: str,
+    candidate_strain: str,
+    profile_cfg: dict[str, Any],
+) -> bool:
+    """Return True when bidding candidate_strain at the 2-level over opening_strain would be Michaels."""
+    cuebid = _michaels_cuebid_suit_over(opening_strain, profile_cfg)
+    return cuebid is not None and cuebid == candidate_strain
+
+
+def _evaluate_weak_two_overcall(
+    ctx: dict[str, Any],
+    opening_strain: str,
+    profile_cfg: dict[str, Any],
+    hand_tag: str,
+    highest_bid: str = "1C",
+) -> tuple[str | None, str | None, str]:
+    """Evaluate whether the hand qualifies for a weak-two style competitive overcall.
+
+    Rules:
+    - 5–10 HCP and NOT passing the opening threshold (same as `_evaluate_weak_two`)
+    - 6+ card suit
+    - Same minimum-HCP-in-suit rule at 5 HCP: require >= 3 HCP in opening suit
+    - Don't overcall with 2H when holding 4+ independent spades
+    - Suit must NOT be the Michaels cuebid position (that bid has a different meaning)
+    - Suits tried in order: spades first, then hearts, then minors
+    - highest_bid: the current highest contract bid (candidate must clear this)
+    """
+    total_hcp = int(ctx["hcp"])
+    if not (5 <= total_hcp <= 10):
+        return None, None, f"{hand_tag} svag-2-indmelding: afvist (HCP {total_hcp} udenfor [5,10])."
+
+    # Don't use weak-two overcall if hand is strong enough for a normal 1-level opening threshold.
+    threshold_ok, _ = _evaluate_opening_threshold(ctx, profile_cfg, _system_def_for_seat("N") or {})
+    if threshold_ok:
+        return (
+            None,
+            None,
+            f"{hand_tag} svag-2-indmelding: afvist (HCP={total_hcp} opfylder 1-plans tærskel).",
+        )
+
+    suit_lens = {
+        "S": int(ctx["spades"]),
+        "H": int(ctx["hearts"]),
+        "D": int(ctx["diamonds"]),
+        "C": int(ctx["clubs"]),
+    }
+    suit_hcp = {
+        "S": int(ctx.get("spades_hcp", 0)),
+        "H": int(ctx.get("hearts_hcp", 0)),
+    }
+
+    for s in ("S", "H", "D", "C"):
+        if s == opening_strain:
+            continue  # don't repeat opponent's suit as a natural bid
+        if suit_lens[s] < 6:
+            continue
+        # The candidate bid at 2-level; must clear the current highest contract.
+        cand = f"2{s}"
+        if not _is_higher_contract(cand, highest_bid):
+            continue
+        # Skip if this would be the Michaels cuebid position.
+        if _is_michaels_position(opening_strain, s, profile_cfg):
+            continue
+        # 2H: don't hide 4-card or longer independent spade suit.
+        if s == "H" and suit_lens["S"] >= 4:
+            continue
+        # Minimum-HCP-in-suit check (only for majors where we track it).
+        if total_hcp == 5 and s in ("S", "H"):
+            if suit_hcp.get(s, 0) < 3:
+                continue
+
+        explanation = (
+            f"{hand_tag} svag-2-indmelding: OK med 2{s} "
+            f"(HCP={total_hcp}, {s.lower()}-farve={suit_lens[s]}"
+            + (f", {s.lower()}-HCP={suit_hcp[s]}" if s in suit_hcp else "")
+            + ")."
+        )
+        return cand, "weak_two_competitive_overcall", explanation
+
+    return (
+        None,
+        None,
+        f"{hand_tag} svag-2-indmelding: afvist (ingen 6+-k farve til rådighed).",
+    )
+
+
+def _evaluate_michaels_cuebid(
+    ctx: dict[str, Any],
+    opening_strain: str,
+    profile_cfg: dict[str, Any],
+    hand_tag: str,
+) -> tuple[str | None, str | None, str]:
+    """Suggest a Michaels cuebid when the hand has both majors over a minor opening.
+
+    Over a minor opening (1C or 1D), Michaels = 2D/2C showing 5-4+ in both majors.
+    Over a major opening (1H or 1S) it shows the other major + a minor.
+    HCP range 8-16 (weak or strong, ambiguous hand treated as intermediate).
+    """
+    cuebid_strain = _michaels_cuebid_suit_over(opening_strain, profile_cfg)
+    if cuebid_strain is None:
+        return None, None, f"{hand_tag} Michaels: ikke aftalt i profil."
+
+    total_hcp = int(ctx["hcp"])
+    spades = int(ctx["spades"])
+    hearts = int(ctx["hearts"])
+
+    # Must be in the Michaels strength range.
+    # Michaels is ambiguous: weak (6-11 HCP, preemptive) or strong (17+ HCP, power cuebid).
+    # Hands in between (12-16 HCP) should double or overcall naturally instead.
+    hcp_weak_max = 11
+    hcp_strong_min = 17
+    is_weak_michaels = 6 <= total_hcp <= hcp_weak_max
+    is_strong_michaels = total_hcp >= hcp_strong_min
+    if not (is_weak_michaels or is_strong_michaels):
+        return None, None, (
+            f"{hand_tag} Michaels: afvist (HCP {total_hcp} er i mellemklassen "
+            f"[{hcp_weak_max+1}-{hcp_strong_min-1}]; brug naturalindmelding eller dobling)."
+        )
+
+    cuebid = f"2{cuebid_strain}"
+
+    if opening_strain in ("C", "D"):
+        # Shows both majors: require 5-4 or better.
+        major_lens = sorted([spades, hearts], reverse=True)
+        if major_lens[0] >= 5 and major_lens[1] >= 4:
+            return (
+                cuebid,
+                "michaels_cuebid_over_minor",
+                f"{hand_tag} Michaels {cuebid} over 1{opening_strain}: OK "
+                f"(spar={spades}, hjerter={hearts}, HCP={total_hcp}).",
+            )
+        return (
+            None,
+            None,
+            f"{hand_tag} Michaels {cuebid}: afvist (kræver 5-4 i majorerne; spar={spades}, hjerter={hearts}).",
+        )
+
+    # Over a major opening: shows other major + minor, needs 5-4 or better.
+    other_major = "S" if opening_strain == "H" else "H"
+    best_minor = max(int(ctx["clubs"]), int(ctx["diamonds"]))
+    other_major_len = int(ctx["spades"] if other_major == "S" else ctx["hearts"])
+    if other_major_len >= 5 and best_minor >= 4:
+        return (
+            cuebid,
+            "michaels_cuebid_over_major",
+            f"{hand_tag} Michaels {cuebid} over 1{opening_strain}: OK "
+            f"{other_major}-farve={other_major_len}, bedste minor={best_minor}, HCP={total_hcp}).",
+        )
+    return (
+        None,
+        None,
+        f"{hand_tag} Michaels {cuebid}: afvist (kræver 5 i {other_major} + 4-k minor).",
+    )
+
+
 def _suggest_second_hand_competitive(
     row: Mapping[str, Any],
     second_seat: str,
@@ -2104,6 +2306,7 @@ def _suggest_second_hand_competitive(
 
     nt_params = _one_nt_overcall_params_for_seat(second_seat)
     sys_def = _system_def_for_seat(second_seat)
+    profile_cfg_seat = _profile_cfg_for_seat(second_seat)
     shape_defs = (sys_def.get("shape_definitions", {}) or {}) if isinstance(sys_def, Mapping) else {}
     if not isinstance(shape_defs, Mapping):
         shape_defs = {}
@@ -2201,6 +2404,13 @@ def _suggest_second_hand_competitive(
 
         return True, None
 
+    # Pre-compute the Michaels cuebid (e.g. "2D" over 1C, "2H" over 1H) to block that
+    # specific combined bid from being used as a natural overcall.
+    _michaels_cuebid_str: str | None = None
+    _mc_strain = _michaels_cuebid_suit_over(first_strain, profile_cfg_seat)
+    if _mc_strain is not None:
+        _michaels_cuebid_str = f"2{_mc_strain}"
+
     overcall_bid = None
     overcall_rule = None
     overcall_line = f"{hand_tag} indmelding: afvist."
@@ -2210,6 +2420,10 @@ def _suggest_second_hand_competitive(
                 continue
             cand = _lowest_higher_bid_for_strain(first_bid, s)
             if cand is None:
+                continue
+            # Skip this specific bid if it would be interpreted as a Michaels cuebid.
+            # (A lower-level overcall in the same suit — e.g. 1D over 1C — is always natural.)
+            if _michaels_cuebid_str is not None and cand == _michaels_cuebid_str:
                 continue
 
             allow_cand, reject_reason = _allow_competitive_self_rebid(cand, s)
@@ -2229,10 +2443,33 @@ def _suggest_second_hand_competitive(
         overcall_line = f"{hand_tag} indmelding: afvist (HCP {int(ctx['hcp'])} < 8)."
     log_lines.append(overcall_line)
 
+    # --- Weak-two style competitive overcall (5-10 HCP, 6+ card suit) ---
+    # Only apply directly over a 1-level opening; at higher levels the bidding
+    # has already passed the preemptive entry point for this call type.
+    if first_level == 1:
+        w2oc_bid, w2oc_rule, w2oc_line = _evaluate_weak_two_overcall(
+            ctx, first_strain, profile_cfg_seat, hand_tag, highest_bid=first_bid
+        )
+    else:
+        w2oc_bid, w2oc_rule, w2oc_line = None, None, (
+            f"{hand_tag} svag-2-indmelding: afvist (modpart har meldt på {first_level}-plans niveau)."
+        )
+    log_lines.append(w2oc_line)
+
+    # --- Michaels cuebid (both majors over minor, or major + minor over major) ---
+    mc_bid, mc_rule, mc_line = _evaluate_michaels_cuebid(
+        ctx, first_strain, profile_cfg_seat, hand_tag
+    )
+    log_lines.append(mc_line)
+
     # Priority: lead-directing doubles are explicit; otherwise allow strong long-suit overcalls to win.
     prefer_overcall = overcall_bid is not None and (
         max(suit_lens.values()) >= 6 and int(ctx["hcp"]) >= 10
     )
+    # Weak-two overcall also preferred when hand is too weak to qualify for a regular overcall/double.
+    prefer_w2oc = w2oc_bid is not None and overcall_bid is None and not double_ok
+    # Michaels cuebid: prefer over plain overcall / double when both majors qualify.
+    prefer_michaels = mc_bid is not None and not prefer_overcall
     parsed_overcall = _parse_contract_bid(overcall_bid) if overcall_bid is not None else None
     if (
         overcall_bid is not None
@@ -2296,6 +2533,20 @@ def _suggest_second_hand_competitive(
             ],
         }
 
+    if prefer_michaels and mc_bid is not None:
+        return {
+            "dealer": second_seat,
+            "profile": None,
+            "bid": mc_bid,
+            "display_bid": _to_display_bid(mc_bid),
+            "rule_id": mc_rule,
+            "explanation": "2. hånd vælger Michaels cuebid (begge majorer / major + minor).",
+            "log_lines": log_lines + [
+                f"{hand_tag} valg: {_to_display_bid(mc_bid)}",
+                f"{hand_tag} regel-id: {mc_rule}",
+            ],
+        }
+
     if overcall_bid is not None:
         return {
             "dealer": second_seat,
@@ -2307,6 +2558,20 @@ def _suggest_second_hand_competitive(
             "log_lines": log_lines + [
                 f"{hand_tag} valg: {_to_display_bid(overcall_bid)}",
                 f"{hand_tag} regel-id: {overcall_rule}",
+            ],
+        }
+
+    if prefer_w2oc and w2oc_bid is not None:
+        return {
+            "dealer": second_seat,
+            "profile": None,
+            "bid": w2oc_bid,
+            "display_bid": _to_display_bid(w2oc_bid),
+            "rule_id": w2oc_rule,
+            "explanation": "2. hånd vælger svag to-indmelding (6+ farve, 5-10 HCP).",
+            "log_lines": log_lines + [
+                f"{hand_tag} valg: {_to_display_bid(w2oc_bid)}",
+                f"{hand_tag} regel-id: {w2oc_rule}",
             ],
         }
 
