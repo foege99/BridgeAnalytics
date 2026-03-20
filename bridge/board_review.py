@@ -747,7 +747,11 @@ def write_board1_layout_sheet(
         score_ov_num = _to_number_or_none(score_ov_raw)
 
         if score_ns_num is None and score_ov_num is not None:
-            score_ns_num = -score_ov_num
+            # bridge.dk gemmer score_ØV i NS-perspektiv (negativ = ØV vandt).
+            # Score NS-kolonnen skal vise NS-perspektivet (fx -150),
+            # Score ØV-kolonnen skal vise ØV-perspektivet (fx +150).
+            score_ns_num = score_ov_num
+            score_ov_num = -score_ov_num
         if score_ov_num is None and score_ns_num is not None:
             score_ov_num = -score_ns_num
 
@@ -1412,13 +1416,28 @@ def write_board1_layout_sheet(
 
             _sym = _STRAIN_DISPLAY.get(_gsk, _gsk)
             _ldr = _LHOOF.get(_best_decl_g, "?")
+            # Title: make clear it is the CONTRACT suit, not a lead suit
             _grp_label = (
-                f"DD Udspil: {_sym} – {_gside}-side  "
-                f"(N={_gcnt}, spilfører: {_best_decl_g}, udspil fra: {_ldr})"
+                f"{_sym}-kontrakt, {_gside} spiller  "
+                f"(spilfører: {_best_decl_g}, udspil fra: {_ldr}, N={_gcnt})"
             )
             _gtc = ws.cell(row=_dl_cur, column=_DD_LEAD_START_COL)
             _write_with_red_suits(_gtc, _grp_label)
             _bold(_gtc)
+            _dl_cur += 1
+
+            # Explanatory note (italic)
+            _note = ws.cell(
+                row=_dl_cur, column=_DD_LEAD_START_COL,
+                value=(
+                    "DD = perfekt spil fra begge sider. "
+                    "Spilfører-tricks = antal stik spilfører opnår. "
+                    "Grønt = bedste defensivudspil (færrest spilfører-stik DD). "
+                    "Forskel 0 = optimalt udspil."
+                ),
+            )
+            if Font is not None:
+                _note.font = Font(italic=True, size=8)
             _dl_cur += 1
 
             _grp_tbl = _grp_lead_table(_per_row_dict, _gsk, _best_decl_g)
@@ -1438,8 +1457,8 @@ def write_board1_layout_sheet(
                     _apply_header_style(_hc)
             _dl_cur += 1
 
-            _g_best_k = min(_grp_tbl, key=lambda k: (_grp_tbl[k], k))
-            _g_best_tricks = _grp_tbl[_g_best_k]
+            # All cards that tie for fewest declarer tricks are equally "best"
+            _g_best_tricks = min(_grp_tbl.values())
 
             # Only highlight "actual lead" in the table that matches per_row's contract
             _show_actual = (
@@ -1452,7 +1471,8 @@ def write_board1_layout_sheet(
                 _trk = _grp_tbl[_ck]
                 _dif = _trk - _g_best_tricks
                 _ia = _show_actual and _ck == _actual_key_g
-                _ib = _ck == _g_best_k
+                # Mark ALL cards tied for minimum tricks as "best"
+                _ib = (_dif == 0)
                 _rfill = _HILITE_YELLOW if _ia else None
                 _disp = _card_key_to_display(_ck)
 
@@ -1626,6 +1646,272 @@ def write_board1_layout_sheet(
         msg_cell = ws.cell(row=_FREQ_HEADER_ROW + 1, column=_FREQ_START_COL, value='Ingen data til frekvenstavle')
         if Font is not None:
             msg_cell.font = Font(italic=True)
+
+    # ------------------------------------------------------------------
+    # 10. Turnerings-oversigt: hvilke turneringer er dette spil set i?
+    #
+    # Bruger work_trav_freq (alle rækker med samme håndsignatur) til at
+    # bygge en tabel: dato · klub · række · antal spil
+    # Placeret i kolonne U (21) fra række 1 → altid synlig øverst.
+    # ------------------------------------------------------------------
+    _TOURN_START_COL = 21   # U
+    _TOURN_START_ROW = 1
+
+    # Ugedagsnavne på dansk (bruges til at vise faktisk ugedag fra dato)
+    _DK_WEEKDAYS = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag', 'Søndag']
+
+    def _weekday_from_date_str(date_str) -> str:
+        """Return Danish weekday name for a date string (YYYY-MM-DD), or '(ukendt)'."""
+        if not date_str or date_str == '(ukendt)':
+            return '(ukendt)'
+        try:
+            import datetime
+            d = datetime.date.fromisoformat(str(date_str)[:10])
+            return _DK_WEEKDAYS[d.weekday()]
+        except Exception:
+            return '(ukendt)'
+
+    try:
+        _tour_src = work_trav_freq.copy()
+        # Sikr dato-kolonne
+        _date_col = 'tournament_date' if 'tournament_date' in _tour_src.columns else None
+        _row_col = 'row' if 'row' in _tour_src.columns else ('section' if 'section' in _tour_src.columns else None)
+        _club_col = 'clubno' if 'clubno' in _tour_src.columns else None
+
+        _group_keys = [c for c in [_date_col, _club_col, _row_col] if c is not None]
+
+        if _group_keys:
+            _tour_summary = (
+                _tour_src.groupby(_group_keys, dropna=False)
+                .size()
+                .reset_index(name='antal')
+                .sort_values(_group_keys)
+            )
+        else:
+            _tour_summary = pd.DataFrame()
+
+        # Header
+        _tourn_hdr_titles = ['Turnering forekommer i:']
+        _tourn_hdr_cell = ws.cell(row=_TOURN_START_ROW, column=_TOURN_START_COL, value='Turnering forekommer i:')
+        _bold(_tourn_hdr_cell)
+        if _styles_available:
+            _tourn_hdr_cell.fill = PatternFill(fill_type='solid', fgColor='D9E8F5')
+            thin_t = Side(style='thin')
+            _tourn_hdr_cell.border = Border(left=thin_t, right=thin_t, top=thin_t, bottom=thin_t)
+
+        # Sub-header
+        _sub_hdr_labels = ['Dato', 'Klub', 'Række', 'Spil']
+        for ci, lbl in enumerate(_sub_hdr_labels):
+            sc = ws.cell(row=_TOURN_START_ROW + 1, column=_TOURN_START_COL + ci, value=lbl)
+            _apply_header_style(sc)
+
+        if not _tour_summary.empty:
+            for ridx, trow in enumerate(_tour_summary.itertuples(index=False), start=0):
+                out_r = _TOURN_START_ROW + 2 + ridx
+
+                # Dato
+                _date_val = getattr(trow, _date_col) if _date_col else None
+                if _date_val is not None and not (isinstance(_date_val, float) and pd.isna(_date_val)):
+                    _date_str = str(_date_val)[:10]
+                else:
+                    _date_str = '(ukendt)'
+
+                # Klub – vis faktisk ugedag fra datoen i stedet for serienavn
+                _club_str = _weekday_from_date_str(_date_str)
+
+                # Række
+                if _row_col:
+                    _row_val = getattr(trow, _row_col, None)
+                    _row_str = str(_row_val).strip() if _row_val is not None and not (isinstance(_row_val, float) and pd.isna(_row_val)) else '(ukendt)'
+                else:
+                    _row_str = '(ukendt)'
+
+                # Antal
+                _antal = getattr(trow, 'antal', '')
+
+                _row_vals = [_date_str, _club_str, _row_str, _antal]
+                for ci, val in enumerate(_row_vals):
+                    dc = ws.cell(row=out_r, column=_TOURN_START_COL + ci, value=val)
+                    _apply_data_style(dc, align='left' if ci < 3 else 'right')
+
+            # Totallinje
+            _total_row = _TOURN_START_ROW + 2 + len(_tour_summary)
+            _total_antal = int(_tour_summary['antal'].sum())
+            _tc_lbl = ws.cell(row=_total_row, column=_TOURN_START_COL, value='Total')
+            _bold(_tc_lbl)
+            if _styles_available:
+                thin_t2 = Side(style='thin')
+                for ci in range(4):
+                    _tc = ws.cell(row=_total_row, column=_TOURN_START_COL + ci)
+                    _tc.border = Border(left=thin_t2, right=thin_t2, top=thin_t2, bottom=thin_t2)
+                    if Font is not None:
+                        _tc.font = Font(bold=True)
+                    _tc.fill = PatternFill(fill_type='solid', fgColor='D9D9D9')
+            ws.cell(row=_total_row, column=_TOURN_START_COL + 3, value=_total_antal)
+        else:
+            ws.cell(row=_TOURN_START_ROW + 2, column=_TOURN_START_COL, value='(Ingen data)')
+
+        # Kolonnebredder for oversigten
+        for ci, w in enumerate([14, 14, 8, 8]):
+            col_letter = ws.cell(row=1, column=_TOURN_START_COL + ci).column_letter
+            ws.column_dimensions[col_letter].width = w
+
+    except Exception:
+        pass  # Turnerings-oversigt er best-effort; fejler aldrig hele arket
+
+    # ------------------------------------------------------------------
+    # 11. Tiest spillede kontrakter (alle turneringer med samme hånd)
+    #
+    # Grupérer work_trav_freq pr. (kontrakt, spilfører, score NS) og viser
+    # én række per unik kombination, sorteret efter % total (faldende).
+    # Henrik & Pers eget resultat fremhæves med gul baggrund (_HILITE_YELLOW).
+    # Placeret i kolonne Y (25) fra række 1 – parallelt med turnerings-oversigt.
+    # ------------------------------------------------------------------
+    try:
+        from collections import Counter as _Counter
+
+        _TIEST_START_COL = 25  # Y
+        _TIEST_START_ROW = 1
+
+        # ---- 1. Saml alle gyldige score_NS værdier fra work_trav_freq ----
+        _t_scores_all: list[float] = []
+        for _, _tf in work_trav_freq.iterrows():
+            _tsco, _ = _mirrored_scores(_tf)
+            _tnum = _to_number_or_none(_tsco)
+            if _tnum is not None:
+                _t_scores_all.append(float(_tnum))
+        _t_n_total = len(_t_scores_all)
+
+        # Eksakt rank/pct-tabel keyed på score_ns
+        _t_rank_lookup: dict[float, dict] = {}
+        if _t_n_total > 0:
+            _t_cnt_by_score = _Counter(_t_scores_all)
+            _t_lower = 0
+            for _tsc in sorted(_t_cnt_by_score):
+                _tc2 = _t_cnt_by_score[_tsc]
+                _t_rank_lookup[float(_tsc)] = {
+                    'rank_top': _t_n_total - _t_lower - _tc2 + 1,
+                    'pct_ns': round(
+                        (2 * _t_lower + (_tc2 - 1)) / max(2 * (_t_n_total - 1), 1) * 100.0, 2
+                    ),
+                }
+                _t_lower += _tc2
+
+        # ---- 2. Række-specifik pct-tabel fra df_trav ----
+        _row_scores_all: list[float] = []
+        for _, _rf in df_trav.iterrows():
+            _rsco, _ = _mirrored_scores(_rf)
+            _rnum = _to_number_or_none(_rsco)
+            if _rnum is not None:
+                _row_scores_all.append(float(_rnum))
+        _row_n = len(_row_scores_all)
+        _row_pct_lookup: dict[float, float] = {}
+        if _row_n > 0:
+            _row_cnt_by_score = _Counter(_row_scores_all)
+            _row_lower = 0
+            for _rsc in sorted(_row_cnt_by_score):
+                _rcc = _row_cnt_by_score[_rsc]
+                _row_pct_lookup[float(_rsc)] = round(
+                    (2 * _row_lower + (_rcc - 1)) / max(2 * (_row_n - 1), 1) * 100.0, 2
+                )
+                _row_lower += _rcc
+
+        # ---- 3. Grupér work_trav_freq pr. (contract, decl, score_NS) ----
+        _tiest_grp: dict[tuple, int] = {}
+        for _, _tf in work_trav_freq.iterrows():
+            _tctr = str(_get_field(_tf, 'contract') or '').strip()
+            _tdecl = _normalize_compass(_get_field(_tf, 'decl')) or '?'
+            _tsco2, _ = _mirrored_scores(_tf)
+            _tnum2 = _to_number_or_none(_tsco2)
+            _tkey = (_tctr, _tdecl, _tnum2)
+            _tiest_grp[_tkey] = _tiest_grp.get(_tkey, 0) + 1
+
+        # ---- 4. Byg tabel-rækker ----
+        _tiest_rows: list[dict] = []
+        for (_tctr, _tdecl, _tnum2), _tantal in _tiest_grp.items():
+            _rl = _t_rank_lookup.get(float(_tnum2)) if _tnum2 is not None else None
+            _pct_tot = _rl['pct_ns'] if _rl else None
+            _rang_num = _rl['rank_top'] if _rl else None
+            _pct_row = _row_pct_lookup.get(float(_tnum2)) if _tnum2 is not None else None
+            _tiest_rows.append({
+                'rang': f"{_rang_num}/{_t_n_total}" if _rang_num is not None else f"?/{_t_n_total}",
+                'kontrakt': _tctr,
+                'spilforer': _tdecl,
+                'resultat_ns': _tnum2,
+                'pct_total': _pct_tot,
+                'pct_row': _pct_row,
+                'antal_par': _tantal,
+            })
+
+        # Sortér: % total faldende, derefter antal par faldende
+        _tiest_rows.sort(key=lambda _x: (
+            -(_x['pct_total'] if _x['pct_total'] is not None else -999.0),
+            -(_x['antal_par'] or 0),
+        ))
+
+        # ---- 5. Overskrift ----
+        _tiest_title = ws.cell(
+            row=_TIEST_START_ROW,
+            column=_TIEST_START_COL,
+            value='Tiest spillede kontrakter (alle turneringer)',
+        )
+        _bold(_tiest_title)
+        if _styles_available:
+            _tiest_title.fill = PatternFill(fill_type='solid', fgColor='D9E8F5')
+            _thin_ti = Side(style='thin')
+            _tiest_title.border = Border(
+                left=_thin_ti, right=_thin_ti, top=_thin_ti, bottom=_thin_ti
+            )
+
+        # ---- 6. Kolonne-overskrifter ----
+        _TIEST_HEADERS = ['Rang', 'Kontrakt', 'Spilfører', 'Resultat NS',
+                          '% Total', '% Rækken', 'Antal par']
+        _tiest_hdr_row = _TIEST_START_ROW + 1
+        for _ci, _th_lbl in enumerate(_TIEST_HEADERS):
+            _hc = ws.cell(row=_tiest_hdr_row, column=_TIEST_START_COL + _ci, value=_th_lbl)
+            _apply_header_style(_hc)
+
+        # ---- 7. Find Henrik & Pers egne nøgler til fremhævning ----
+        _per_sco_val, _ = _mirrored_scores(per_row)
+        _per_sco_key = _to_number_or_none(_per_sco_val)
+        _per_ctr_key = str(_get_field(per_row, 'contract') or '').strip()
+        _per_decl_key = _normalize_compass(_get_field(per_row, 'decl')) or '?'
+
+        # ---- 8. Skriv data-rækker ----
+        for _ridx, _item in enumerate(_tiest_rows):
+            _out_r = _tiest_hdr_row + 1 + _ridx
+            _is_per = (
+                _item['kontrakt'] == _per_ctr_key
+                and _item['spilforer'] == _per_decl_key
+                and _item['resultat_ns'] == _per_sco_key
+            )
+            _row_fill = _HILITE_YELLOW if _is_per else (
+                _ZEBRA_FILL if (_ridx % 2) == 1 else None
+            )
+            _vals_ti = [
+                (_item['rang'], 'center'),
+                (_item['kontrakt'], 'center'),
+                (_item['spilforer'], 'center'),
+                (_item['resultat_ns'], 'right'),
+                (_item['pct_total'], 'right'),
+                (_item['pct_row'], 'right'),
+                (_item['antal_par'], 'right'),
+            ]
+            for _ci, (_val, _align) in enumerate(_vals_ti):
+                _dc = ws.cell(row=_out_r, column=_TIEST_START_COL + _ci)
+                if _ci == 1:  # Kontrakt kan indeholde ♥/♦
+                    _write_with_red_suits(_dc, _val)
+                else:
+                    _dc.value = _val
+                _apply_data_style(_dc, align=_align, fill_color=_row_fill)
+
+        # ---- 9. Kolonnebredder ----
+        for _ci, _w in enumerate([14, 14, 12, 14, 10, 10, 10]):
+            _col_ltr = ws.cell(row=1, column=_TIEST_START_COL + _ci).column_letter
+            ws.column_dimensions[_col_ltr].width = _w
+
+    except Exception:
+        pass  # Tiest-kontrakter er best-effort; fejler aldrig hele arket
 
 
 def write_last_tournament_board_layout_sheets(

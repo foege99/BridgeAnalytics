@@ -214,6 +214,31 @@ def test_traveller_mirrors_missing_score_side():
     assert ws.cell(row=2, column=12).value == -420
 
 
+def test_traveller_mirrors_missing_score_ns_from_ov_side():
+    """When only score_ØV is present (ØV-kontrakt gennemført), vises NS-score negativt
+    og ØV-score positivt.
+    bridge.dk gemmer score_ØV i NS-perspektiv: -150 = NS tabte 150 (ØV vandt 150).
+    Forventet display: Score NS = -150, Score ØV = +150."""
+    df = _make_df(
+        score_NS=None,
+        score_ØV=-150,
+        decl='V',
+        contract='1NT',
+        level=1,
+        strain='NT',
+        tricks=9,
+        point_NS=2,
+        point_ØV=8,
+    )
+    writer, wb = _make_writer_mock()
+    write_board1_layout_sheet(writer, df, PER)
+    ws = wb['Board1_LastTournament']
+
+    # K2/L2 = Score NS / Score ØV
+    assert ws.cell(row=2, column=11).value == -150, "Score NS skal være negativt (NS tabte)"
+    assert ws.cell(row=2, column=12).value == 150, "Score ØV skal være positivt (ØV vandt)"
+
+
 def test_pooled_lead_effect_section_written_under_board():
     """A pooled lead-effect section (A+B+C) should be written below DD table."""
     df_a = _make_df(
