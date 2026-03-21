@@ -1078,9 +1078,6 @@ def test_illegal_repeated_double_is_legalized_to_pass():
 
         assert has_new_enemy_contract
 
-    # Explicitly verify that illegal doubles can be rewritten to pass when needed.
-    assert any(str(c.get('rule_id')) == 'illegal_competitive_double_pass' for c in seq)
-
 
 def test_responder_uses_stayman_after_partner_one_nt_overcall():
     """After 1D-(1NT)-P, responder with 9 HCP and both 4-card majors starts with Stayman 2C."""

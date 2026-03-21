@@ -3267,7 +3267,16 @@ def _suggest_third_hand_after_partner_open(
     fsf_enabled = _is_fourth_suit_forcing_enabled_for_seat(third_seat)
     two_over_one_enabled = _is_two_over_one_gf_enabled_for_seat(third_seat)
     side_has_2o1_dhs = _side_has_two_over_one_dhs(side_history)
-    opp_has_contract = _parse_contract_bid(second_call_bid) is not None
+    # Opponent's contract is only "live" if it is higher than partner's most recent bid.
+    # If our side (partner) bid last and is already above the opponents, there is nothing
+    # to double or compete over — treat the situation as no active opponent contract.
+    _opp_raw = _parse_contract_bid(second_call_bid) is not None
+    _partner_outbid_opp = (
+        _opp_raw
+        and partner_opening_bid is not None
+        and _is_higher_contract(str(partner_opening_bid), second_call_bid or "PASS")
+    )
+    opp_has_contract = _opp_raw and not _partner_outbid_opp
     double_ctx = _double_context_for_seat(list(prior_calls or []), third_seat)
     if opp_has_contract:
         log_lines.append(
@@ -4269,12 +4278,114 @@ def _suggest_third_hand_after_partner_open(
                     ],
                 }
 
-    # After partner's level-2 minor support, probe 4-card majors before further minor raises.
+    # Game-forcing jump raise when OPENER has 4-card support for partner's 2-level new minor.
+    # Example: V opens 1♥, Ø responds 2♦ (10+ HCP, game-forcing new suit).
+    # With 15+ HCP and 4+ diamonds, V jumps to 4♦ showing: excellent opener + diamond fit.
+    # This lets partner choose 4♥ (if partner also holds 4+ hearts) or 5♦.
+    if (
+        open_seat == third_seat                   # I am the opener
+        and resp_strain is not None               # partner has responded
+        and resp_lvl is not None
+        and int(resp_lvl) >= 2                    # partner responded at 2-level (GF context)
+        and resp_strain in ("C", "D")             # partner bid a minor at 2-level
+        and resp_strain != open_strain            # it is a NEW suit (not my opening suit)
+        and partner_strain == resp_strain         # partner's current strain is still that minor
+        and suit_lens[resp_strain] >= 4           # I have 4-card support
+        and int(ctx["hcp"]) >= 15                 # strong opener — game-forcing jump raise
+    ):
+        target = f"4{resp_strain}"
+        if _is_higher_contract(target, highest_contract):
+            play_pts, relation, shortness_pts, trump_len_bonus, trump_len = _playing_points_after_fit(
+                ctx,
+                third_seat,
+                resp_strain,
+                row.get("vul") if isinstance(row, Mapping) else None,
+            )
+            display = _to_display_bid(target)
+            suit_dk = {"D": "ruder", "C": "klør"}.get(resp_strain, resp_strain)
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": target,
+                "display_bid": display,
+                "rule_id": "opener_jump_raise_partner_minor_gf",
+                "explanation": (
+                    f"Åbner springer til 4{suit_dk[0].lower()} med 4-k støtte og {int(ctx['hcp'])} HCP "
+                    f"— viser udgangskrav og fit."
+                ),
+                "log_lines": log_lines + [
+                    (
+                        f"{hand_tag} springhævning: {int(ctx['hcp'])} HCP, {trump_len} trumf i {suit_dk} "
+                        f"(play_pts={play_pts}, shortness={shortness_pts})."
+                    ),
+                    f"{hand_tag} regel: åbner springer til 4{suit_dk[0].lower()} med HCP>=15 og 4-k støtte — udgangskrav + fit.",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: opener_jump_raise_partner_minor_gf",
+                ],
+            }
+
+    # After partner's level-2 minor, probe for an unbid 4-card major before minor raises.
+    # Guard: skip the major if opener has already bid it (not a new suit).
+    # Special case: if partner's LAST bid was a game-forcing jump raise of OUR minor
+    # (opener_jump_raise_partner_minor_gf), the auction is game-forcing.
+    # If opener bid a major first (e.g., 1♥), check only for that major:
+    #   - 4♥ if Ø holds 4+ hearts → confirms 5-4 major fit (opener has 5+)
+    #   - otherwise → 5m (game in minor)
+    if str(partner_last_rule) == "opener_jump_raise_partner_minor_gf" and partner_strain in ("C", "D"):
+        # Probe only for opener's original major (open_strain), to find a 5-4 major fit.
+        if open_strain in ("H", "S") and open_strain not in reserved:
+            if suit_lens[open_strain] >= 4:
+                cand = _lowest_higher_bid_for_strain(highest_contract, open_strain)
+                if cand is not None:
+                    display = _to_display_bid(cand)
+                    suit_dk = {"D": "ruder", "C": "klør"}.get(partner_strain, partner_strain)
+                    return {
+                        "dealer": third_seat,
+                        "profile": None,
+                        "bid": cand,
+                        "display_bid": display,
+                        "rule_id": "responder_major_probe_after_opener_jump_raise",
+                        "explanation": (
+                            f"Svarer viser 4-k {open_strain.lower()} efter åbners springhævning i "
+                            f"svarers {suit_dk} — bekræfter majorfit med åbner."
+                        ),
+                        "log_lines": log_lines + [
+                            f"{hand_tag} major-probe: {display} efter {suit_dk}-springhævning "
+                            f"(Ø har {suit_lens[open_strain]}k i {open_strain.lower()}, åbner har 5+).",
+                            f"{hand_tag} valg: {display}",
+                            f"{hand_tag} regel-id: responder_major_probe_after_opener_jump_raise",
+                        ],
+                    }
+        # No major fit available — accept game in the minor.
+        game_target = f"5{partner_strain}"
+        if _is_higher_contract(game_target, highest_contract):
+            display = _to_display_bid(game_target)
+            suit_dk = {"D": "ruder", "C": "klør"}.get(partner_strain, partner_strain)
+            return {
+                "dealer": third_seat,
+                "profile": None,
+                "bid": game_target,
+                "display_bid": display,
+                "rule_id": "responder_accept_minor_game_after_opener_jump_raise",
+                "explanation": (
+                    f"Ingen majorfit — accepterer udgang i {suit_dk} "
+                    f"efter åbners udgangskrævende springhævning."
+                ),
+                "log_lines": log_lines + [
+                    f"{hand_tag} minor-udgang: ingen 4-k i åbners major ({open_strain}) → accepterer {display}.",
+                    f"{hand_tag} valg: {display}",
+                    f"{hand_tag} regel-id: responder_accept_minor_game_after_opener_jump_raise",
+                ],
+            }
+
     if partner_strain in ("C", "D") and partner_lvl >= 2 and int(ctx["hcp"]) >= 10:
         for major in ("H", "S"):
             if suit_lens[major] < 4:
                 continue
             if major in reserved:
+                continue
+            if major == open_strain:
+                # Do not re-bid opener's original suit as a "major probe" — use a suit rebid elsewhere.
                 continue
             cand = _lowest_higher_bid_for_strain(highest_contract, major)
             if cand is None:
@@ -4286,7 +4397,7 @@ def _suggest_third_hand_after_partner_open(
                 "bid": cand,
                 "display_bid": display,
                 "rule_id": "third_hand_minor_support_major_probe",
-                "explanation": "Viser 4-k major efter minor-støtte før yderligere minorhævning.",
+                "explanation": "Viser 4-k major (ikke åbningsfarven) efter minor-støtte.",
                 "log_lines": log_lines + [
                     f"{hand_tag} major-probe: OK med {display} efter minor-støtte.",
                     f"{hand_tag} valg: {display}",
@@ -4731,6 +4842,8 @@ def _apply_state_ceiling_to_call(
             rule_id_txt = str(out.get("rule_id") or "")
             keep_constructive_3nt = "fourth_suit_reply_3nt_with_stopper" in rule_id_txt
             keep_game_place_major = "responder_after_1M_2new_2M_game_place" in rule_id_txt
+            keep_opener_jump_raise_gf = "opener_jump_raise_partner_minor_gf" in rule_id_txt
+            keep_accept_minor_game = "responder_accept_minor_game_after_opener_jump_raise" in rule_id_txt
             keep_competitive_one_nt = (
                 "natural_one_nt_overcall" in rule_id_txt and str(out.get("bid") or "").upper() == "1NT"
             )
@@ -4758,6 +4871,8 @@ def _apply_state_ceiling_to_call(
                 and (not keep_stayman_artificial)
                 and (not keep_stayman_opener_rebid)
                 and (not keep_stayman_followup)
+                and (not keep_opener_jump_raise_gf)
+                and (not keep_accept_minor_game)
                 and required > (estimate.tricks_range.high + 0.01)
             )
             soft_reject = (
@@ -4768,6 +4883,8 @@ def _apply_state_ceiling_to_call(
                 and (not keep_stayman_artificial)
                 and (not keep_stayman_opener_rebid)
                 and (not keep_stayman_followup)
+                and (not keep_opener_jump_raise_gf)
+                and (not keep_accept_minor_game)
                 and estimate.confidence >= 0.35
                 and required > (estimate.tricks_range.midpoint + 0.50)
             )
