@@ -1534,6 +1534,24 @@ def _side_has_two_over_one_dhs(side_history: list[tuple[str, int, str]]) -> bool
     return strain2 != strain1
 
 
+def _overcall_suit_quality(hand_dot: str, strain: str) -> tuple[int, int]:
+    """Return (suit_quality_score, top_honors) for natural overcall assessment.
+
+    Suit Quality Test (SQT): suit_len + number of top honors (A/K/Q/J/T
+    that fall within the first 3 positions of the suit).  A 5-card suit
+    needs SQT >= 7 to overcall at the 2-level comfortably; at the 1-level
+    SQT >= 6 suffices.  A biddable suit must have at least one top honor
+    (A, K, or Q) — T7432 with zero top honors is not overcallable.
+    """
+    parsed = parse_hand(str(hand_dot))
+    ranks = list(parsed.suits.get(strain, ""))
+    length = int(parsed.lengths.get(strain, 0))
+    honor_ranks = set("AKQJT")
+    top_honors = sum(1 for r in ranks if r in honor_ranks)
+    sqt = length + top_honors
+    return sqt, top_honors
+
+
 def _has_stopper_in_suit(hand_dot: str, strain: str) -> bool:
     parsed = parse_hand(str(hand_dot))
     ranks = parsed.suits.get(strain, "")
@@ -2553,6 +2571,19 @@ def _suggest_second_hand_competitive(
     if _mc_strain is not None:
         _michaels_cuebid_str = f"2{_mc_strain}"
 
+    # Build set of suits already bid naturally by opponents (not NT).
+    # We must not overcall in a suit the opponents have already shown —
+    # it risks running into their length/strength and warns of bad splits.
+    my_side = _seat_side(second_seat)
+    opp_bid_suits: set[str] = set()
+    for prev in list(prior_calls or []):
+        prev_seat = _normalize_seat(prev.get("dealer"))
+        if prev_seat is None or _seat_side(prev_seat) == my_side:
+            continue
+        prev_parsed = _parse_contract_bid(str(prev.get("bid") or "PASS").upper())
+        if prev_parsed is not None and prev_parsed[1] != "NT":
+            opp_bid_suits.add(prev_parsed[1])
+
     overcall_bid = None
     overcall_rule = None
     overcall_line = f"{hand_tag} indmelding: afvist."
@@ -2560,12 +2591,34 @@ def _suggest_second_hand_competitive(
         for s in candidate_suits:
             if suit_lens[s] < 5:
                 continue
+            # Never overcall in a suit already bid naturally by an opponent.
+            if s in opp_bid_suits:
+                log_lines.append(
+                    f"{hand_tag} indmelding: afvist {_to_display_bid('1' + s)[1:]} "
+                    f"(farven er allerede meldt af modparten)."
+                )
+                continue
             cand = _lowest_higher_bid_for_strain(first_bid, s)
             if cand is None:
                 continue
             # Skip this specific bid if it would be interpreted as a Michaels cuebid.
             # (A lower-level overcall in the same suit — e.g. 1D over 1C — is always natural.)
             if _michaels_cuebid_str is not None and cand == _michaels_cuebid_str:
+                continue
+
+            # Suit Quality Test: the suit must have at least 1 top honor (A/K/Q)
+            # and SQT (length + honor count) >= 6 at 1-level or >= 7 at 2-level.
+            parsed_cand = _parse_contract_bid(cand)
+            cand_level = int(parsed_cand[0]) if parsed_cand is not None else 1
+            sqt, top_honors = _overcall_suit_quality(str(hand_dot), s)
+            sqt_min = 7 if cand_level >= 2 else 6
+            top_honors_min = 1  # must have at least A, K, or Q in the suit
+            if top_honors < top_honors_min or sqt < sqt_min:
+                log_lines.append(
+                    f"{hand_tag} indmelding: afvist {_to_display_bid(cand)} "
+                    f"(for svag farve: SQT={sqt} < {sqt_min} eller ingen topærer; "
+                    f"T/J tæller ikke som tilstrækkelig farvestyrke)."
+                )
                 continue
 
             allow_cand, reject_reason = _allow_competitive_self_rebid(cand, s)
@@ -2578,7 +2631,8 @@ def _suggest_second_hand_competitive(
             overcall_rule = "natural_overcall_basic"
             overcall_line = (
                 f"{hand_tag} indmelding: OK med {_to_display_bid(cand)} "
-                f"(5+ farve, HCP {int(ctx['hcp'])}, højere end {_to_display_bid(first_bid)})."
+                f"(5+ farve, SQT={sqt}, HCP {int(ctx['hcp'])}, "
+                f"højere end {_to_display_bid(first_bid)})."
             )
             break
     else:
