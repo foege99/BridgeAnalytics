@@ -73,6 +73,9 @@ from bridge.declarer_analysis import (
 # ✅ IMPORT MVP METRICS
 from bridge.mvp_metrics import add_mvp_metrics
 
+# ✅ IMPORT HULANALYSE
+from bridge.hole_analysis import make_hole_analysis, REPORT_DESCRIPTIONS
+
 HENRIK = "Henrik Friis"
 PER = "Per Føge Jensen"
 REPORT_EVENING_SHEET = "Rapport - Aften"
@@ -175,6 +178,66 @@ def _format_report_sheet(ws, width: int = 12) -> None:
                 continue
             if isinstance(val, (int, float)):
                 cell.number_format = '0'
+
+
+def _write_hole_explanation(
+    ws,
+    report_key: str,
+    metadata: dict,
+    n_report_boards: int,
+) -> None:
+    """
+    Write a human-readable explanation block below the report data,
+    followed by dataset metadata (number of boards, tournaments, date range).
+    Bold lines are those whose text (stripped) ends with ':' and is all-uppercase.
+    """
+    if ws is None:
+        return
+
+    description_lines = REPORT_DESCRIPTIONS.get(report_key, [])
+
+    # ── metadata block ───────────────────────────────────────────────────────
+    start_row = ws.max_row + 2  # one blank separator row
+    row = start_row
+
+    def _bold_cell(r, text):
+        c = ws.cell(row=r, column=1, value=text)
+        if Font:
+            c.font = Font(bold=True)
+
+    n_total   = metadata.get('n_boards', '?')
+    n_tourn   = metadata.get('n_tournaments', '?')
+    date_from = metadata.get('date_from', '?')
+    date_to   = metadata.get('date_to',   '?')
+
+    _bold_cell(row, "DATAGRUNDLAG:")
+    row += 1
+    ws.cell(row=row, column=1,
+            value=f"Denne rapport: {n_report_boards} boards")
+    row += 1
+    ws.cell(row=row, column=1,
+            value=f"Alle H+P boards: {n_total} boards i {n_tourn} turneringer")
+    row += 1
+    ws.cell(row=row, column=1,
+            value=f"Periode: {date_from}  –  {date_to}")
+    row += 2  # blank line before description
+
+    # ── description block ────────────────────────────────────────────────────
+    if description_lines:
+        for line in description_lines:
+            stripped = line.strip()
+            is_header = (
+                stripped.endswith(":")
+                and stripped[:-1].replace(" ", "").isupper()
+            )
+            if is_header:
+                _bold_cell(row, line)
+            else:
+                ws.cell(row=row, column=1, value=line)
+            row += 1
+
+    # ── widen col A to fit the description text ───────────────────────────────
+    ws.column_dimensions["A"].width = 70
 
 
 def _add_evening_trend_chart(ws, anchor: str) -> None:
@@ -852,6 +915,27 @@ def main():
     df_all = add_mvp_metrics(df_all)
     print("  ✓ MVP metrikker beregnet")
 
+    # ✅ HULANALYSE (alle turneringer i cache, H+P som par)
+    print("\nGenererer Hulanalyse (zone/HCP/LTC/DD/felt for H+P som par)...")
+    _all_cached_rows = _load_all_cached_rows(cache)
+    if _all_cached_rows:
+        df_all_cached = pd.DataFrame(_all_cached_rows)
+        if "tournament_date" not in df_all_cached.columns and "date" in df_all_cached.columns:
+            df_all_cached["tournament_date"] = df_all_cached["date"]
+        df_all_cached = add_hand_features(df_all_cached)
+        df_all_cached = add_phase21_fields(df_all_cached)
+        df_all_cached = add_mvp_metrics(df_all_cached)
+        hole_reports = make_hole_analysis(df_all_cached)
+    else:
+        hole_reports = make_hole_analysis(df_all)
+    hole_metadata = hole_reports.get("_metadata", {})
+    _hole_total = (
+        hole_reports["zone_summary"]["Boards"].sum()
+        if not hole_reports["zone_summary"].empty
+        else 0
+    )
+    print(f"  ✓ Hulanalyse: {_hole_total} boards analyseret fra {hole_metadata.get('n_tournaments', '?')} turneringer")
+
     # ✅ BOARD REVIEW ANALYSE (kun A-rækken)
     print("\nGenererer Board Review rapporter (kun A-rækken)...")
     df_a_only = df_all[df_all['section'] == 'A'].copy()
@@ -1089,6 +1173,29 @@ def main():
         df_mvp = df_all[available_mvp]
         df_mvp = df_mvp.loc[:, ~df_mvp.columns.duplicated()]
         df_mvp.to_excel(writer, sheet_name='MVP_Metrics', index=False)
+
+        # ✅ HULANALYSE – zone/HCP/LTC/DD analyse for H+P som meldepar
+        _hole_sheet_map = {
+            'Hul_Zone_Overblik':     'zone_summary',
+            'Hul_Zone_vs_Felt':      'zone_vs_field',
+            'Hul_HCP_Profil':        'hcp_profile',
+            'Hul_HCP_Zone_Fordeling':'hcp_zone_distribution',
+            'Hul_Aggression':        'aggression_summary',
+            'Hul_Udgange_Misset':    'game_misses',
+            'Hul_Slem_Misset':       'slam_misses',
+            'Hul_Slembud':           'slam_attempts',
+            'Hul_Slem_Kvalitet':     'slam_quality',
+            'Hul_3NT_vs_MinorSlem':  'nt_vs_minor_slam',
+            'Hul_Overbud':           'overbids',
+            'Hul_5Major':            'five_major',
+        }
+        for sheet_name, report_key in _hole_sheet_map.items():
+            df_rep = hole_reports.get(report_key, pd.DataFrame())
+            if df_rep is not None and not df_rep.empty:
+                df_rep.to_excel(writer, sheet_name=sheet_name, index=False)
+                ws = writer.sheets.get(sheet_name)
+                _format_report_sheet(ws, width=16)
+                _write_hole_explanation(ws, report_key, hole_metadata, len(df_rep))
 
         # Board layouts (1-24) from latest tournament
         write_last_tournament_board_layout_sheets(writer, df_all, PER, board_start=1, board_end=24)
