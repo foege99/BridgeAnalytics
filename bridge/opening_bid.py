@@ -4488,6 +4488,77 @@ def _suggest_third_hand_after_partner_open(
             best_new = cand
             break
 
+    # --- 2NT / 3NT with stopper after opponent's natural suit overcall ---
+    # After e.g. 1♦-(1♠), responder with a spade stopper and invitational values
+    # should bid 2NT (10-12 HCP) or 3NT (13+ HCP) BEFORE bidding a new suit.
+    # Only applies when:
+    #   1. Opponent has overcalled naturally at 1-level (opp_has_contract + 1-level suit)
+    #   2. Responder has a stopper in the overcalled suit
+    #   3. No 5-card natural suit to bid (balanced/semi-balanced type)
+    #   4. Not already placed contract elsewhere
+    if (
+        opp_has_contract
+        and not opener_already_placed_contract
+        and current_is_responder_first          # first response, not a rebid
+        and int(ctx["hcp"]) >= 10
+    ):
+        _opp_bid_parsed = _parse_contract_bid(second_call_bid) if second_call_bid else None
+        _opp_overcall_suit = (
+            _opp_bid_parsed[1]
+            if _opp_bid_parsed is not None and _opp_bid_parsed[1] != "NT"
+            else None
+        )
+        _opp_overcall_level = _opp_bid_parsed[0] if _opp_bid_parsed is not None else None
+
+        if (
+            _opp_overcall_suit is not None
+            and _opp_overcall_level == 1
+            and _has_stopper_in_suit(str(hand_dot), _opp_overcall_suit)
+        ):
+            # Prefer NT only when no independent 5-card suit can be bid naturally.
+            _has_five_card_suit = any(
+                suit_lens[s] >= 5
+                for s in ("S", "H", "D", "C")
+                if s != partner_strain and s not in reserved
+            )
+            if not _has_five_card_suit:
+                hcp_val = int(ctx["hcp"])
+                # 13+ HCP: game-forcing → 3NT
+                # 10-12 HCP: invitational → 2NT
+                _nt_target = "3NT" if hcp_val >= 13 else "2NT"
+                _nt_rule = (
+                    "third_hand_nt_game_after_overcall"
+                    if hcp_val >= 13
+                    else "third_hand_nt_invite_after_overcall"
+                )
+                if _is_higher_contract(_nt_target, highest_contract):
+                    _opp_suit_dk = {
+                        "S": "spar", "H": "hjerter", "D": "ruder", "C": "klør"
+                    }.get(_opp_overcall_suit, _opp_overcall_suit)
+                    display_nt = _to_display_bid(_nt_target)
+                    _nt_expl = (
+                        f"{'Udgangskrav' if hcp_val >= 13 else 'Invitation'} "
+                        f"med hold i modpartens {_opp_suit_dk} → {display_nt} "
+                        f"({hcp_val} HCP)."
+                    )
+                    return {
+                        "dealer": third_seat,
+                        "profile": None,
+                        "bid": _nt_target,
+                        "display_bid": display_nt,
+                        "rule_id": _nt_rule,
+                        "explanation": _nt_expl,
+                        "log_lines": log_lines + [
+                            f"{hand_tag} 2NT/3NT: stopper i {_opp_suit_dk}, "
+                            f"{hcp_val} HCP, ingen 5-k naturlig farve → {display_nt}.",
+                            f"{hand_tag} valg: {display_nt}",
+                            f"{hand_tag} regel-id: {_nt_rule}",
+                        ],
+                    }
+                log_lines.append(
+                    f"{hand_tag} 2NT/3NT: afvist ({_nt_target} ikke lovlig over {_to_display_bid(highest_contract)})."
+                )
+
     if best_new is not None:
         display = _to_display_bid(best_new)
         return {
