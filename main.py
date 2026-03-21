@@ -59,7 +59,6 @@ from bridge.board_review import (
     board_review_statistics,
     make_latest_tournament_lead_effect_allboards,
     print_board_review_stats,
-    get_latest_tournament_other_rows_results,
     make_latest_tournament_board_consistency_check,
     print_latest_tournament_board_consistency_summary,
     write_last_tournament_board_layout_sheets,
@@ -827,13 +826,8 @@ def main():
         print("Ingen data tilbage efter board-identitetsfilter.")
         return
 
-    # ✅ IDENTIFICER B/C RESULTATER + CHECK BOARD-KONSISTENS A/B/C
+    # ✅ CHECK BOARD-KONSISTENS A/B/C
     print("\nChecker board-konsistens på tværs af rækker A/B/C (seneste turnering)...")
-    df_other_rows_latest = get_latest_tournament_other_rows_results(
-        df_all,
-        base_row='A',
-        other_rows=('B', 'C'),
-    )
     df_board_abc_check, board_abc_summary = make_latest_tournament_board_consistency_check(
         df_all,
         rows=('A', 'B', 'C'),
@@ -841,7 +835,6 @@ def main():
         board_end=24,
     )
     print_latest_tournament_board_consistency_summary(board_abc_summary)
-    print(f"  ✓ Resultater i andre rækker (B+C): {len(df_other_rows_latest)}")
 
     df_board_abc_summary = pd.DataFrame([board_abc_summary])
 
@@ -1047,8 +1040,6 @@ def main():
             df_board_abc_check.to_excel(writer, sheet_name='Board_ABC_Check', index=False)
         if not df_board_abc_summary.empty:
             df_board_abc_summary.to_excel(writer, sheet_name='Board_ABC_Summary', index=False)
-        if not df_other_rows_latest.empty:
-            df_other_rows_latest.to_excel(writer, sheet_name='Rows_BC_Results', index=False)
 
         # Lead effect split into one sheet per contract color (♣ ♦ ♥ ♠ NT)
         # Within each color, rows are ranked best→worst by avg_pct_defense (most tricks for defense on top).
