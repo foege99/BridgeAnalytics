@@ -2658,6 +2658,40 @@ def _suggest_second_hand_competitive(
     )
     log_lines.append(mc_line)
 
+    # Guard 1: never re-trigger Michaels by the same seat — once is enough.
+    if mc_bid is not None:
+        _already_michaels = any(
+            _normalize_seat(c.get("dealer")) == second_seat
+            and "michaels" in str(c.get("rule_id") or "").lower()
+            for c in (prior_calls or [])
+        )
+        if _already_michaels:
+            mc_bid = None
+            mc_rule = None
+            log_lines.append(
+                f"{hand_tag} Michaels: afvist (allerede brugt af {second_seat} i denne melderunde)."
+            )
+
+    # Guard 2: at 3-level cuebid, require 5-5 shape OR ≥8 HCP.
+    # A 3-level Michaels (e.g. 3♥) is a much larger commitment than 2♥; with only
+    # 5-4 shape and 6-7 HCP the bid is too dangerous, especially at adverse vulnerability.
+    if mc_bid is not None:
+        _mc_legalized = _lowest_higher_bid_for_strain(first_bid, first_strain)
+        _mc_parsed = _parse_contract_bid(_mc_legalized) if _mc_legalized else None
+        if _mc_parsed is not None and _mc_parsed[0] >= 3:
+            other_major = "S" if first_strain == "H" else "H"
+            best_minor_len = max(suit_lens["C"], suit_lens["D"])
+            other_major_len = suit_lens.get(other_major, 0)
+            is_five_five = other_major_len >= 5 and best_minor_len >= 5
+            if not is_five_five and int(ctx["hcp"]) < 8:
+                mc_bid = None
+                mc_rule = None
+                log_lines.append(
+                    f"{hand_tag} Michaels: afvist (3-trins cuebid kræver 5-5 fordeling "
+                    f"eller min. 8 HCP; {other_major.lower()}={other_major_len}, "
+                    f"bedste minor={best_minor_len}, HCP={int(ctx['hcp'])})."
+                )
+
     # --- Landy / Cappelletti over opponent's 1NT opening ---
     nt_conv_bid: str | None = None
     nt_conv_rule: str | None = None
